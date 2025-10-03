@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Slingshot — Planck.js</title>
+  
+  <!-- Link to the external stylesheet -->
+  <link rel="stylesheet" href="style.css">
+
+  <!-- Planck.js (Box2D for JS) from a CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/planck-js@0.2.7/dist/planck.min.js"></script>
+</head>
+<body>
+  <canvas id="c"></canvas>
+  
+  <div id="ui">
+    <h1>Slingshot — Planck.js</h1>
+    <p>Drag from the sling, release to launch. Dots preview the ballistic path.<br/>
+       <span class="kbd">R</span> reset • <span class="kbd">D</span> drag • <span class="kbd">H</span> destructible</p>
+    
+    <div id="controls">
+      <h2>Building Controls <span class="note">(Press 'R' to apply)</span></h2>
+      <div class="slider-group">
+        <label for="num-buildings-slider">Buildings</label>
+        <input type="range" id="num-buildings-slider" min="1" max="10" value="1">
+        <span id="num-buildings-value">1</span>
+      </div>
+      <div class="slider-group">
+        <label for="min-width-slider">Min Width</label>
+        <input type="range" id="min-width-slider" min="3" max="15" value="6">
+        <span id="min-width-value">6</span>
+      </div>
+       <div class="slider-group">
+        <label for="max-width-slider">Max Width</label>
+        <input type="range" id="max-width-slider" min="3" max="15" value="6">
+        <span id="max-width-value">6</span>
+      </div>
+      <div class="slider-group">
+        <label for="min-height-slider">Min Height</label>
+        <input type="range" id="min-height-slider" min="5" max="30" value="10">
+        <span id="min-height-value">10</span>
+      </div>
+      <div class="slider-group">
+        <label for="max-height-slider">Max Height</label>
+        <input type="range" id="max-height-slider" min="5" max="30" value="10">
+        <span id="max-height-value">10</span>
+      </div>
+    </div>
+  </div>
+
+  <div id="help-button">Press <span class="kbd">H</span> for Help</div>
+
+  <div id="help-modal">
+    <div id="help-backdrop"></div>
+    <div id="help-content">
+      <button class="close-btn">&times;</button>
+      <h2>Controls & Instructions</h2>
+      <p><strong>Objective:</strong> Knock down all the buildings!</p>
+      <ul>
+        <li><strong>Launch:</strong> Click and drag from the brown sling on the left. Release to fire.</li>
+        <li><strong>Reset Scene (<span class="kbd">R</span>):</strong> Resets the simulation, applying any new building settings from the sliders.</li>
+        <li><strong>Toggle Air Drag (<span class="kbd">D</span>):</strong> Toggles air resistance on the projectile.</li>
+        <li><strong>Toggle Destructible Mode (<span class="kbd">H</span>):</strong> Toggles whether blocks take damage and break.</li>
+        <li><strong>Help Menu (<span class="kbd">H</span>):</strong> Toggles this help window.</li>
+      </ul>
+      <h3>Building Controls</h3>
+      <p>Use the sliders in the top-left panel to customize the city generation. After changing the values, press the <span class="kbd">R</span> key to generate a new city with those parameters.</p>
+    </div>
+  </div>
+
+  <!-- Link to the main application script -->
+  <script src="script.js" defer></script>
+</body>
+</html>
