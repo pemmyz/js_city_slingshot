@@ -1,17 +1,24 @@
 /**
- * A simple performance monitor that tracks and displays FPS stats.
+ * A performance monitor that tracks FPS, physics objects, collisions,
+ * and displays a real-time FPS history graph.
  */
 class PerfMonitor {
-  constructor() {
+  constructor(world) {
+    this.world = world;
     this.fpsHistory = [];
-    this.historySize = 100; // Store last 100 FPS readings
+    this.historySize = 100; // Store last 100 FPS readings (e.g., 100 seconds)
     this.lastTime = performance.now();
     this.frames = 0;
+    this.maxGraphFps = 70; // The FPS value that corresponds to the top of the graph
 
-    this.fps = 0;
-    this.minFps = Infinity;
-    this.avgFps = 0;
-    this.medianFps = 0;
+    this.stats = {
+      fps: 0,
+      minFps: Infinity,
+      avgFps: 0,
+      medianFps: 0,
+      bodies: 0,
+      contacts: 0
+    };
 
     this.createPanel();
   }
@@ -19,22 +26,40 @@ class PerfMonitor {
   createPanel() {
     this.container = document.createElement('div');
     this.container.id = 'perf-monitor';
-    
-    this.fpsEl = this.createStatElement('FPS');
-    this.minEl = this.createStatElement('Min');
-    this.avgEl = this.createStatElement('Avg');
-    this.medianEl = this.createStatElement('Median');
 
+    const statsGrid = document.createElement('div');
+    statsGrid.className = 'perf-stats-grid';
+    
+    // Create DOM elements for stats
+    this.dom = {
+        fps: this.createStatElement(statsGrid, 'FPS'),
+        min: this.createStatElement(statsGrid, 'Min'),
+        avg: this.createStatElement(statsGrid, 'Avg'),
+        median: this.createStatElement(statsGrid, 'Median'),
+        bodies: this.createStatElement(statsGrid, 'Bodies'),
+        contacts: this.createStatElement(statsGrid, 'Contacts'),
+    };
+    
+    this.container.appendChild(statsGrid);
+
+    // Create canvas for the graph
+    this.graphCanvas = document.createElement('canvas');
+    this.graphCanvas.id = 'perf-graph';
+    this.graphCanvas.width = this.historySize * 2; // Higher resolution
+    this.graphCanvas.height = 60;
+    this.graphCtx = this.graphCanvas.getContext('2d');
+    this.container.appendChild(this.graphCanvas);
+    
     document.body.appendChild(this.container);
   }
 
-  createStatElement(label) {
+  createStatElement(parent, label) {
     const el = document.createElement('div');
     el.className = 'perf-stat';
     
     const labelEl = document.createElement('span');
     labelEl.className = 'label';
-    labelEl.textContent = label + ':';
+    labelEl.textContent = label;
     
     const valueEl = document.createElement('span');
     valueEl.className = 'value';
@@ -42,7 +67,7 @@ class PerfMonitor {
 
     el.appendChild(labelEl);
     el.appendChild(valueEl);
-    this.container.appendChild(el);
+    parent.appendChild(el);
     return valueEl;
   }
 
@@ -51,12 +76,11 @@ class PerfMonitor {
     const time = performance.now();
 
     if (time >= this.lastTime + 1000) {
-      this.fps = this.frames;
+      this.stats.fps = this.frames;
       this.lastTime = time;
       this.frames = 0;
 
-      // Update history and stats
-      this.fpsHistory.push(this.fps);
+      this.fpsHistory.push(this.stats.fps);
       if (this.fpsHistory.length > this.historySize) {
         this.fpsHistory.shift();
       }
@@ -67,33 +91,74 @@ class PerfMonitor {
   }
 
   calculateStats() {
-    if (this.fpsHistory.length === 0) return;
+    // FPS stats
+    if (this.fpsHistory.length > 0) {
+        this.stats.minFps = Math.min(...this.fpsHistory);
+        const sum = this.fpsHistory.reduce((a, b) => a + b, 0);
+        this.stats.avgFps = Math.round(sum / this.fpsHistory.length);
+        const sorted = [...this.fpsHistory].sort((a, b) => a - b);
+        const mid = Math.floor(sorted.length / 2);
+        this.stats.medianFps = sorted.length % 2 === 0 
+          ? Math.round((sorted[mid - 1] + sorted[mid]) / 2)
+          : sorted[mid];
+    }
     
-    this.minFps = Math.min(...this.fpsHistory);
-    
-    const sum = this.fpsHistory.reduce((a, b) => a + b, 0);
-    this.avgFps = Math.round(sum / this.fpsHistory.length);
-    
-    const sorted = [...this.fpsHistory].sort((a, b) => a - b);
-    const mid = Math.floor(sorted.length / 2);
-    this.medianFps = sorted.length % 2 === 0 
-      ? Math.round((sorted[mid - 1] + sorted[mid]) / 2)
-      : sorted[mid];
+    // Physics stats
+    let dynamicBodyCount = 0;
+    for (let b = this.world.getBodyList(); b; b = b.getNext()) {
+        if (b.isDynamic()) {
+            dynamicBodyCount++;
+        }
+    }
+    this.stats.bodies = dynamicBodyCount;
+    this.stats.contacts = this.world.getContactCount();
   }
 
   updateDOM() {
-    this.fpsEl.textContent = this.fps;
-    this.minEl.textContent = this.minFps === Infinity ? '--' : this.minFps;
-    this.avgEl.textContent = this.avgFps;
-    this.medianEl.textContent = this.medianFps;
+    this.dom.fps.textContent = this.stats.fps;
+    this.dom.min.textContent = this.stats.minFps === Infinity ? '--' : this.stats.minFps;
+    this.dom.avg.textContent = this.stats.avgFps;
+    this.dom.median.textContent = this.stats.medianFps;
+    this.dom.bodies.textContent = this.stats.bodies;
+    this.dom.contacts.textContent = this.stats.contacts;
+    this.drawGraph();
+  }
+  
+  drawGraph() {
+      const ctx = this.graphCtx;
+      const w = this.graphCanvas.width;
+      const h = this.graphCanvas.height;
+      const barWidth = w / this.historySize;
+
+      ctx.clearRect(0, 0, w, h);
+
+      // Draw 60fps reference line
+      const lineY = h - (60 / this.maxGraphFps) * h;
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.1)';
+      ctx.fillRect(0, lineY, w, 1);
+
+      for (let i = 0; i < this.fpsHistory.length; i++) {
+          const fps = this.fpsHistory[i];
+          const barHeight = Math.min(h, (fps / this.maxGraphFps) * h);
+          
+          if (fps >= 55) ctx.fillStyle = '#22c55e'; // Green
+          else if (fps >= 30) ctx.fillStyle = '#f59e0b'; // Yellow
+          else ctx.fillStyle = '#ef4444'; // Red
+          
+          ctx.fillRect(i * barWidth, h - barHeight, barWidth, barHeight);
+      }
   }
 }
 
 
 (function() {
-  const perfMonitor = new PerfMonitor();
   const pl = planck; // from CDN
   const Vec2 = pl.Vec2;
+
+  // ----- Physics world -----
+  const GRAVITY = Vec2(0, -10);
+  let world = new pl.World(GRAVITY);
+  const perfMonitor = new PerfMonitor(world);
 
   // ----- Canvas & coordinate helpers -----
   const canvas = document.getElementById('c');
@@ -117,10 +182,6 @@ class PerfMonitor {
   function vLen(v){ return Math.hypot(v.x, v.y); }
   function vNorm(v){ const L = vLen(v); return L > 1e-8 ? vMul(v, 1/L) : Vec2(0,0); }
   function clampVec(v, max){ const L = vLen(v); return L > max ? vMul(v, max / L) : v; }
-
-  // ----- Physics world -----
-  const GRAVITY = Vec2(0, -10);
-  let world = new pl.World(GRAVITY);
 
   // ----- Game Settings -----
   let buildingSettings = {
@@ -161,9 +222,6 @@ class PerfMonitor {
     return b;
   }
   
-  /**
-   * Creates a cityscape based on the current buildingSettings.
-   */
   function createCityscape() {
     const startScreenX = window.innerWidth / 2;
     const startWorldX = screenToWorld(startScreenX, 0).x;
@@ -243,12 +301,20 @@ class PerfMonitor {
   window.addEventListener('keydown', (e)=>{ 
     if (e.key === 'r' || e.key === 'R') resetLevel(); 
     else if (e.key === 'd' || e.key === 'D') enableDrag = !enableDrag; 
-    else if (e.key.toLowerCase() === 'h') toggleHelp();
+    else if (e.key.toLowerCase() === 'h' && document.activeElement.type !== 'range') {
+        toggleHelp();
+    }
   });
 
   function cleanupLevel() {
-      blocks.forEach(b => world.destroyBody(b)); blocks = [];
-      if(bird) { world.destroyBody(bird); bird = null; }
+      // Clear all dynamic bodies from the world
+      for (let b = world.getBodyList(); b; b = b.getNext()) {
+        if (b.isDynamic()) {
+            world.destroyBody(b);
+        }
+      }
+      blocks = [];
+      bird = null;
       bodiesToDestroy = [];
       if (countdownInterval) { clearInterval(countdownInterval); countdownInterval = null; }
   }
@@ -301,17 +367,6 @@ class PerfMonitor {
     helpButton.addEventListener('click', toggleHelp);
     helpBackdrop.addEventListener('click', toggleHelp);
     closeBtn.addEventListener('click', toggleHelp);
-    
-    // Add keydown listener for help menu (in addition to destructible mode)
-    window.addEventListener('keydown', (e) => {
-        if (e.key.toLowerCase() === 'h') {
-          // Toggle help if the controls panel is not the active element
-          if (document.activeElement.type !== 'range') {
-              toggleHelp();
-          }
-        }
-    });
-
 
     // --- Sliders ---
     const sliders = {
@@ -335,7 +390,6 @@ class PerfMonitor {
         buildingSettings[key] = value;
         values[key].textContent = value;
 
-        // Ensure min is not greater than max
         if (key === 'minWidth' && value > buildingSettings.maxWidth) {
           sliders.maxWidth.value = value;
           buildingSettings.maxWidth = value;
@@ -376,13 +430,21 @@ class PerfMonitor {
     }
     
     if (bodiesToDestroy.length > 0) {
-        bodiesToDestroy.forEach(body => { blocks = blocks.filter(b => b !== body); world.destroyBody(body); });
+        bodiesToDestroy.forEach(body => { 
+            blocks = blocks.filter(b => b !== body); 
+            // Check if body exists before destroying
+            if (world.isLocked() === false && body.m_world === world) {
+                world.destroyBody(body);
+            }
+        });
         bodiesToDestroy = [];
     }
     if (bird) {
         const isOffScreen = bird.getPosition().y < -5 || bird.getPosition().x > 50;
         const isStopped = launched && !bird.isAwake();
-        if (isOffScreen || isStopped) { world.destroyBody(bird); bird = null; }
+        if ((isOffScreen || isStopped) && !world.isLocked()) { 
+             world.destroyBody(bird); bird = null; 
+        }
     }
     
     if (!bird && launched && !levelIsClearing) { 
