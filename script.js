@@ -6,7 +6,7 @@ class PerfMonitor {
   constructor(world) {
     this.world = world;
     this.fpsHistory = [];
-    this.historySize = 100; // Store last 100 FPS readings (e.g., 100 seconds)
+    this.historySize = 100; // Store last 100 FPS readings
     this.lastTime = performance.now();
     this.frames = 0;
     this.maxGraphFps = 70; // The FPS value that corresponds to the top of the graph
@@ -30,7 +30,6 @@ class PerfMonitor {
     const statsGrid = document.createElement('div');
     statsGrid.className = 'perf-stats-grid';
     
-    // Create DOM elements for stats
     this.dom = {
         fps: this.createStatElement(statsGrid, 'FPS'),
         min: this.createStatElement(statsGrid, 'Min'),
@@ -41,11 +40,9 @@ class PerfMonitor {
     };
     
     this.container.appendChild(statsGrid);
-
-    // Create canvas for the graph
     this.graphCanvas = document.createElement('canvas');
     this.graphCanvas.id = 'perf-graph';
-    this.graphCanvas.width = this.historySize * 2; // Higher resolution
+    this.graphCanvas.width = this.historySize * 2;
     this.graphCanvas.height = 60;
     this.graphCtx = this.graphCanvas.getContext('2d');
     this.container.appendChild(this.graphCanvas);
@@ -56,15 +53,12 @@ class PerfMonitor {
   createStatElement(parent, label) {
     const el = document.createElement('div');
     el.className = 'perf-stat';
-    
     const labelEl = document.createElement('span');
     labelEl.className = 'label';
     labelEl.textContent = label;
-    
     const valueEl = document.createElement('span');
     valueEl.className = 'value';
     valueEl.textContent = '--';
-
     el.appendChild(labelEl);
     el.appendChild(valueEl);
     parent.appendChild(el);
@@ -79,19 +73,14 @@ class PerfMonitor {
       this.stats.fps = this.frames;
       this.lastTime = time;
       this.frames = 0;
-
       this.fpsHistory.push(this.stats.fps);
-      if (this.fpsHistory.length > this.historySize) {
-        this.fpsHistory.shift();
-      }
-
+      if (this.fpsHistory.length > this.historySize) this.fpsHistory.shift();
       this.calculateStats();
       this.updateDOM();
     }
   }
 
   calculateStats() {
-    // FPS stats
     if (this.fpsHistory.length > 0) {
         this.stats.minFps = Math.min(...this.fpsHistory);
         const sum = this.fpsHistory.reduce((a, b) => a + b, 0);
@@ -102,14 +91,8 @@ class PerfMonitor {
           ? Math.round((sorted[mid - 1] + sorted[mid]) / 2)
           : sorted[mid];
     }
-    
-    // Physics stats
     let dynamicBodyCount = 0;
-    for (let b = this.world.getBodyList(); b; b = b.getNext()) {
-        if (b.isDynamic()) {
-            dynamicBodyCount++;
-        }
-    }
+    for (let b = this.world.getBodyList(); b; b = b.getNext()) { if (b.isDynamic()) dynamicBodyCount++; }
     this.stats.bodies = dynamicBodyCount;
     this.stats.contacts = this.world.getContactCount();
   }
@@ -125,30 +108,210 @@ class PerfMonitor {
   }
   
   drawGraph() {
-      const ctx = this.graphCtx;
-      const w = this.graphCanvas.width;
-      const h = this.graphCanvas.height;
-      const barWidth = w / this.historySize;
-
-      ctx.clearRect(0, 0, w, h);
-
-      // Draw 60fps reference line
+      const ctx = this.graphCtx; const w = this.graphCanvas.width; const h = this.graphCanvas.height;
+      const barWidth = w / this.historySize; ctx.clearRect(0, 0, w, h);
       const lineY = h - (60 / this.maxGraphFps) * h;
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.1)';
-      ctx.fillRect(0, lineY, w, 1);
-
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.1)'; ctx.fillRect(0, lineY, w, 1);
       for (let i = 0; i < this.fpsHistory.length; i++) {
           const fps = this.fpsHistory[i];
           const barHeight = Math.min(h, (fps / this.maxGraphFps) * h);
-          
-          if (fps >= 55) ctx.fillStyle = '#22c55e'; // Green
-          else if (fps >= 30) ctx.fillStyle = '#f59e0b'; // Yellow
-          else ctx.fillStyle = '#ef4444'; // Red
-          
+          if (fps >= 55) ctx.fillStyle = '#22c55e'; else if (fps >= 30) ctx.fillStyle = '#f59e0b'; else ctx.fillStyle = '#ef4444';
           ctx.fillRect(i * barWidth, h - barHeight, barWidth, barHeight);
       }
   }
 }
+
+/**
+ * A detailed physics performance telemetry module.
+ */
+class PhysicsTelemetry {
+  constructor(world, hz, damageThreshold) {
+    this.world = world;
+    this.hz = hz;
+    this.damageThreshold = damageThreshold;
+
+    // --- State & buffers ---
+    this.stepTimeBuffer = []; // Ring buffer for p95
+    this.impulseBuffer = [];
+    this.bufferSize = 120; // 2 seconds at 60fps
+    this.lastUpdateTime = 0;
+    this.updateInterval = 250; // Update DOM 4 times per second
+
+    // --- Per-frame accumulators ---
+    this.frame = {
+      stepTime: 0,
+      substeps: 0,
+    };
+
+    // --- Per-second accumulators ---
+    this.second = {
+      damageEvents: 0,
+      wakeups: 0,
+      sleepdowns: 0,
+      contactsNew: 0,
+      contactsDestroyed: 0,
+    };
+    this.lastSecondTime = 0;
+    this.lastAwakeCount = 0;
+    this.lastContactCount = 0;
+
+    // --- Cached/snapshot values ---
+    this.stats = {};
+
+    this.initDOM();
+  }
+    
+  initDOM() {
+    this.dom = {};
+    const elements = document.querySelectorAll('#telemetry-content [data-stat]');
+    elements.forEach(el => {
+      this.dom[el.dataset.stat] = el;
+    });
+
+    document.getElementById('telemetry-handle').addEventListener('click', () => {
+        document.getElementById('telemetry-panel').classList.toggle('open');
+    });
+  }
+
+  // Called at the start of the main loop
+  beginFrame() {
+    this.frame.stepTime = 0;
+    this.frame.substeps = 0;
+  }
+    
+  // Called immediately before world.step()
+  beginStep() {
+    this.stepStartTime = performance.now();
+  }
+
+  // Called immediately after world.step()
+  endStep() {
+    this.frame.stepTime += performance.now() - this.stepStartTime;
+    this.frame.substeps++;
+  }
+
+  // Called from the 'post-solve' event
+  postSolve(impulse) {
+    const normalImpulse = impulse.normalImpulses[0];
+    if (normalImpulse > 0) {
+      this.impulseBuffer.push(normalImpulse);
+      if (this.impulseBuffer.length > this.bufferSize) this.impulseBuffer.shift();
+      if (normalImpulse > this.damageThreshold) this.second.damageEvents++;
+    }
+  }
+  
+  // Called at the end of the main loop
+  endFrame(accumulator) {
+    this.stepTimeBuffer.push(this.frame.stepTime);
+    if (this.stepTimeBuffer.length > this.bufferSize) this.stepTimeBuffer.shift();
+
+    const now = performance.now();
+    
+    // --- Update per-second stats ---
+    if (now >= this.lastSecondTime + 1000) {
+        // Body stats (run once per second for performance)
+        let bodyCount = 0, dynamicCount = 0, awakeCount = 0, sleepingCount = 0, bulletCount = 0, fixtureCount = 0;
+        for (let b = this.world.getBodyList(); b; b = b.getNext()) {
+            bodyCount++;
+            if (b.isDynamic()) {
+                dynamicCount++;
+                if (b.isAwake()) awakeCount++; else sleepingCount++;
+            }
+            if(b.isBullet()) bulletCount++;
+            for (let f = b.getFixtureList(); f; f = f.getNext()) fixtureCount++;
+        }
+        const currentContactCount = this.world.getContactCount();
+        const contactDelta = currentContactCount - this.lastContactCount;
+        this.second.contactsNew = Math.max(0, contactDelta);
+        this.second.contactsDestroyed = Math.max(0, -contactDelta);
+        
+        const awakeDelta = awakeCount - this.lastAwakeCount;
+        this.second.wakeups = Math.max(0, awakeDelta);
+        this.second.sleepdowns = Math.max(0, -awakeDelta);
+        
+        this.stats.s_damageEvents = this.second.damageEvents;
+        this.stats.s_wakeups = this.second.wakeups;
+        this.stats.s_sleepdowns = this.second.sleepdowns;
+        this.stats.s_contactsNew = this.second.contactsNew;
+        this.stats.s_contactsDestroyed = this.second.contactsDestroyed;
+
+        this.stats.bodies_total = bodyCount;
+        this.stats.bodies_dynamic = dynamicCount;
+        this.stats.fixtures_total = fixtureCount;
+        this.stats.joints_total = this.world.getJointCount();
+        this.stats.bullets_count = bulletCount;
+        
+        // Reset per-second counters
+        this.second.damageEvents = 0;
+        this.lastSecondTime = now;
+        this.lastAwakeCount = awakeCount;
+        this.lastContactCount = currentContactCount;
+    }
+      
+    // --- Update stats for rendering (less frequently) ---
+    if (now >= this.lastUpdateTime + this.updateInterval) {
+        // STEP
+        this.stats.step_time_ms = this.frame.stepTime.toFixed(2);
+        this.stats.step_substeps = this.frame.substeps;
+        this.stats.step_accumulator = accumulator.toFixed(4);
+        
+        const budget = 1000 / this.hz;
+        this.stats.step_budget_hit = this.frame.stepTime > budget ? 'YES' : 'NO';
+        this.stats.step_hz_target = this.hz;
+        this.stats.step_dt = (1/this.hz).toPrecision(4);
+        
+        // BODIES
+        const awakeCount = this.lastAwakeCount;
+        const dynamicCount = this.stats.bodies_dynamic || 0;
+        this.stats.bodies_awake = awakeCount;
+        this.stats.bodies_sleeping = dynamicCount - awakeCount;
+        this.stats.bodies_sleep_ratio = dynamicCount > 0 ? ((dynamicCount - awakeCount) / dynamicCount).toFixed(2) : '0.00';
+        this.stats.awake_ratio = dynamicCount > 0 ? (awakeCount / dynamicCount).toFixed(2) : '0.00';
+
+        // COLLISION
+        this.stats.contacts_active = this.world.getContactCount();
+
+        // PERCENTILES & AVERAGES (expensive, run less often)
+        if (this.stepTimeBuffer.length > 0) {
+            const sortedTimes = [...this.stepTimeBuffer].sort((a,b) => a-b);
+            const p95Index = Math.floor(sortedTimes.length * 0.95);
+            this.stats.step_time_p95 = sortedTimes[p95Index].toFixed(2);
+        }
+        if (this.impulseBuffer.length > 0) {
+            const sortedImpulses = [...this.impulseBuffer].sort((a,b) => a-b);
+            const p95Index = Math.floor(sortedImpulses.length * 0.95);
+            this.stats.normal_impulse_p95 = sortedImpulses[p95Index].toFixed(2);
+            const impulseSum = this.impulseBuffer.reduce((a,b) => a+b, 0);
+            this.stats.normal_impulse_avg = (impulseSum / this.impulseBuffer.length).toFixed(2);
+        }
+      
+        this.updateDOM();
+        this.lastUpdateTime = now;
+    }
+  }
+
+  updateDOM() {
+    for (const key in this.stats) {
+        if (this.dom[key]) {
+            const value = this.stats[key];
+            const el = this.dom[key];
+            if(el.textContent !== value) el.textContent = value;
+        }
+    }
+    // Handle per-second stats separately
+    this.dom.damage_events.textContent = this.stats.s_damageEvents || 0;
+    this.dom.wakeups_per_s.textContent = this.stats.s_wakeups || 0;
+    this.dom.sleepdowns_per_s.textContent = this.stats.s_sleepdowns || 0;
+    this.dom.contacts_new_per_s.textContent = this.stats.s_contactsNew || 0;
+    this.dom.contacts_destroyed_per_s.textContent = this.stats.s_contactsDestroyed || 0;
+
+    // Color coding for budget hits
+    const budgetHit = this.stats.step_budget_hit === 'YES';
+    this.dom.step_time_ms.style.color = budgetHit ? '#ef4444' : '';
+    this.dom.step_budget_hit.style.color = budgetHit ? '#ef4444' : '';
+  }
+}
+
 
 
 (function() {
@@ -157,8 +320,16 @@ class PerfMonitor {
 
   // ----- Physics world -----
   const GRAVITY = Vec2(0, -10);
+  const HZ = 60;
   let world = new pl.World(GRAVITY);
+
+  // ----- Game Settings -----
+  const DAMAGE_IMPULSE_THRESHOLD = 3.0;
+
+  // ----- Performance Monitoring -----
   const perfMonitor = new PerfMonitor(world);
+  const physicsTelemetry = new PhysicsTelemetry(world, HZ, DAMAGE_IMPULSE_THRESHOLD);
+
 
   // ----- Canvas & coordinate helpers -----
   const canvas = document.getElementById('c');
@@ -183,7 +354,7 @@ class PerfMonitor {
   function vNorm(v){ const L = vLen(v); return L > 1e-8 ? vMul(v, 1/L) : Vec2(0,0); }
   function clampVec(v, max){ const L = vLen(v); return L > max ? vMul(v, max / L) : v; }
 
-  // ----- Game Settings -----
+  // ----- Game Config -----
   let buildingSettings = {
     numBuildings: 1,
     minWidth: 6,
@@ -201,7 +372,6 @@ class PerfMonitor {
   let countdownInterval = null;
   let destructibleMode = true;
   let bodiesToDestroy = [];
-  const DAMAGE_IMPULSE_THRESHOLD = 3.0;
   const INITIAL_BLOCK_HEALTH = 100;
 
   function createBoundaries() {
@@ -234,21 +404,14 @@ class PerfMonitor {
     let currentWorldX = startWorldX;
     
     const numBuildings = buildingSettings.numBuildings;
-    const totalGapWidth = (numBuildings - 1) * blockWorldW * 2; // Estimate gap space
-    const totalBuildingWidth = availableWidth - totalGapWidth;
-    const avgBuildingWidth = numBuildings > 0 ? totalBuildingWidth / numBuildings : 0;
-
-
     for (let i = 0; i < numBuildings; i++) {
         const widthRange = buildingSettings.maxWidth - buildingSettings.minWidth;
         const heightRange = buildingSettings.maxHeight - buildingSettings.minHeight;
-        
         const buildingWidthInBlocks = buildingSettings.minWidth + Math.floor(Math.random() * (widthRange + 1));
         const buildingHeightInBlocks = buildingSettings.minHeight + Math.floor(Math.random() * (heightRange + 1));
-        
         const buildingWorldW = buildingWidthInBlocks * blockWorldW;
 
-        if (currentWorldX + buildingWorldW > endWorldX) break; // Don't build off-screen
+        if (currentWorldX + buildingWorldW > endWorldX) break;
 
         const wallColor = buildingColors[Math.floor(Math.random() * buildingColors.length)];
 
@@ -273,8 +436,6 @@ class PerfMonitor {
 
   // ----- Slingshot config -----
   const slingBase = Vec2(3.0, 2.0), maxPull = 1.25, kSpeed = 18.0, gamma = 1.10, minSpeed = 1.5, mouthOffset = 0.16;
-
-  // State
   let isAiming = false, pointerWorld = slingBase.clone(), launched = false, bird = null, showDrag = false, enableDrag = false;
 
   function spawnBird(pos, v0) {
@@ -307,15 +468,8 @@ class PerfMonitor {
   });
 
   function cleanupLevel() {
-      // Clear all dynamic bodies from the world
-      for (let b = world.getBodyList(); b; b = b.getNext()) {
-        if (b.isDynamic()) {
-            world.destroyBody(b);
-        }
-      }
-      blocks = [];
-      bird = null;
-      bodiesToDestroy = [];
+      for (let b = world.getBodyList(); b; b = b.getNext()) { if (b.isDynamic()) world.destroyBody(b); }
+      blocks = []; bird = null; bodiesToDestroy = [];
       if (countdownInterval) { clearInterval(countdownInterval); countdownInterval = null; }
   }
   
@@ -340,6 +494,7 @@ class PerfMonitor {
   }
 
   world.on('post-solve', function(contact, impulse) {
+    physicsTelemetry.postSolve(impulse); // TELEMETRY HOOK
     if (!destructibleMode) return;
     const fA = contact.getFixtureA(), fB = contact.getFixtureB(), bA = fA.getBody(), bB = fB.getBody();
     const dataA = bA.getUserData(), dataB = bB.getUserData(); let blockBody = null;
@@ -368,48 +523,16 @@ class PerfMonitor {
     helpBackdrop.addEventListener('click', toggleHelp);
     closeBtn.addEventListener('click', toggleHelp);
 
-    // --- Sliders ---
-    const sliders = {
-      numBuildings: document.getElementById('num-buildings-slider'),
-      minWidth: document.getElementById('min-width-slider'),
-      maxWidth: document.getElementById('max-width-slider'),
-      minHeight: document.getElementById('min-height-slider'),
-      maxHeight: document.getElementById('max-height-slider'),
-    };
-    const values = {
-      numBuildings: document.getElementById('num-buildings-value'),
-      minWidth: document.getElementById('min-width-value'),
-      maxWidth: document.getElementById('max-width-value'),
-      minHeight: document.getElementById('min-height-value'),
-      maxHeight: document.getElementById('max-height-value'),
-    };
+    const sliders = { numBuildings: document.getElementById('num-buildings-slider'), minWidth: document.getElementById('min-width-slider'), maxWidth: document.getElementById('max-width-slider'), minHeight: document.getElementById('min-height-slider'), maxHeight: document.getElementById('max-height-slider'), };
+    const values = { numBuildings: document.getElementById('num-buildings-value'), minWidth: document.getElementById('min-width-value'), maxWidth: document.getElementById('max-width-value'), minHeight: document.getElementById('min-height-value'), maxHeight: document.getElementById('max-height-value'), };
     
     for (const key in sliders) {
       sliders[key].addEventListener('input', (e) => {
-        const value = parseInt(e.target.value);
-        buildingSettings[key] = value;
-        values[key].textContent = value;
-
-        if (key === 'minWidth' && value > buildingSettings.maxWidth) {
-          sliders.maxWidth.value = value;
-          buildingSettings.maxWidth = value;
-          values.maxWidth.textContent = value;
-        }
-        if (key === 'maxWidth' && value < buildingSettings.minWidth) {
-          sliders.minWidth.value = value;
-          buildingSettings.minWidth = value;
-          values.minWidth.textContent = value;
-        }
-        if (key === 'minHeight' && value > buildingSettings.maxHeight) {
-          sliders.maxHeight.value = value;
-          buildingSettings.maxHeight = value;
-          values.maxHeight.textContent = value;
-        }
-        if (key === 'maxHeight' && value < buildingSettings.minHeight) {
-          sliders.minHeight.value = value;
-          buildingSettings.minHeight = value;
-          values.minHeight.textContent = value;
-        }
+        const value = parseInt(e.target.value); buildingSettings[key] = value; values[key].textContent = value;
+        if (key === 'minWidth' && value > buildingSettings.maxWidth) { sliders.maxWidth.value = value; buildingSettings.maxWidth = value; values.maxWidth.textContent = value; }
+        if (key === 'maxWidth' && value < buildingSettings.minWidth) { sliders.minWidth.value = value; buildingSettings.minWidth = value; values.minWidth.textContent = value; }
+        if (key === 'minHeight' && value > buildingSettings.maxHeight) { sliders.maxHeight.value = value; buildingSettings.maxHeight = value; values.maxHeight.textContent = value; }
+        if (key === 'maxHeight' && value < buildingSettings.minHeight) { sliders.minHeight.value = value; buildingSettings.minHeight = value; values.minHeight.textContent = value; }
       });
     }
   }
@@ -420,51 +543,44 @@ class PerfMonitor {
   createCityscape();
 
   // ----- Simulation loop -----
-  const hz = 60; const dt = 1 / hz; let acc = 0; let last = performance.now();
+  const dt = 1 / HZ; let acc = 0; let last = performance.now();
   function loop(now) {
+    physicsTelemetry.beginFrame(); // TELEMETRY HOOK
+    
     const elapsed = Math.min(0.25, (now - last) / 1000); last = now; acc += elapsed;
     while (acc >= dt) {
       if (enableDrag && bird) applyAirDrag(bird);
+      
+      physicsTelemetry.beginStep(); // TELEMETRY HOOK
       world.step(dt, 8, 3);
+      physicsTelemetry.endStep(); // TELEMETRY HOOK
+      
       acc -= dt;
     }
     
     if (bodiesToDestroy.length > 0) {
         bodiesToDestroy.forEach(body => { 
             blocks = blocks.filter(b => b !== body); 
-            // Check if body exists before destroying
-            if (world.isLocked() === false && body.m_world === world) {
-                world.destroyBody(body);
-            }
+            if (world.isLocked() === false && body.m_world === world) world.destroyBody(body);
         });
         bodiesToDestroy = [];
     }
     if (bird) {
         const isOffScreen = bird.getPosition().y < -5 || bird.getPosition().x > 50;
         const isStopped = launched && !bird.isAwake();
-        if ((isOffScreen || isStopped) && !world.isLocked()) { 
-             world.destroyBody(bird); bird = null; 
-        }
+        if ((isOffScreen || isStopped) && !world.isLocked()) { world.destroyBody(bird); bird = null; }
     }
     
     if (!bird && launched && !levelIsClearing) { 
         if (checkWinCondition()) {
-            levelIsClearing = true;
-            levelClearCountdown = 3;
-            countdownInterval = setInterval(() => {
-                levelClearCountdown--;
-                if (levelClearCountdown <= 0) clearInterval(countdownInterval);
-            }, 1000);
-            setTimeout(() => {
-                startNewLevel();
-                levelIsClearing = false;
-                levelClearCountdown = 0;
-                if (countdownInterval) clearInterval(countdownInterval);
-            }, 3000); 
+            levelIsClearing = true; levelClearCountdown = 3;
+            countdownInterval = setInterval(() => { levelClearCountdown--; if (levelClearCountdown <= 0) clearInterval(countdownInterval); }, 1000);
+            setTimeout(() => { startNewLevel(); levelIsClearing = false; levelClearCountdown = 0; if (countdownInterval) clearInterval(countdownInterval); }, 3000); 
         }
     }
     draw();
-    perfMonitor.end(); // Update performance monitor
+    perfMonitor.end();
+    physicsTelemetry.endFrame(acc); // TELEMETRY HOOK
     requestAnimationFrame(loop);
   }
   requestAnimationFrame(loop);

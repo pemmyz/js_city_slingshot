@@ -69,6 +69,83 @@
     </div>
   </div>
 
+  <!-- Telemetry Panel -->
+  <div id="telemetry-panel">
+    <div id="telemetry-handle">
+      <span>&#9881;</span>
+      <span>P</span>
+      <span>h</span>
+      <span>y</span>
+      <span>s</span>
+      <span>i</span>
+      <span>c</span>
+      <span>s</span>
+    </div>
+    <div id="telemetry-content">
+      <h3>Physics Telemetry</h3>
+      <!-- WORLD / STEP -->
+      <div class="telemetry-group">
+        <h4>WORLD / STEP</h4>
+        <div class="telemetry-grid">
+          <span class="label">step.time_ms</span><span class="value" data-stat="step_time_ms">--</span>
+          <span class="label"> (p95)</span><span class="value" data-stat="step_time_p95">--</span>
+          <span class="label">step.hz_target</span><span class="value" data-stat="step_hz_target">--</span>
+          <span class="label">step.dt</span><span class="value" data-stat="step_dt">--</span>
+          <span class="label">step.substeps</span><span class="value" data-stat="step_substeps">--</span>
+          <span class="label">step.accumulator</span><span class="value" data-stat="step_accumulator">--</span>
+          <span class="label">step.time_budget_hit</span><span class="value" data-stat="step_budget_hit">--</span>
+          <span class="label">...velocity (ms)</span><span class="value na">N/A</span>
+          <span class="label">...position (ms)</span><span class="value na">N/A</span>
+          <span class="label">...toi (ms)</span><span class="value na">N/A</span>
+        </div>
+      </div>
+      <!-- BODIES / FIXTURES -->
+      <div class="telemetry-group">
+        <h4>BODIES / FIXTURES</h4>
+        <div class="telemetry-grid">
+          <span class="label">bodies.total</span><span class="value" data-stat="bodies_total">--</span>
+          <span class="label">bodies.dynamic</span><span class="value" data-stat="bodies_dynamic">--</span>
+          <span class="label">bodies.awake</span><span class="value" data-stat="bodies_awake">--</span>
+          <span class="label">bodies.sleeping</span><span class="value" data-stat="bodies_sleeping">--</span>
+          <span class="label">sleep_ratio</span><span class="value" data-stat="bodies_sleep_ratio">--</span>
+          <span class="label">fixtures.total</span><span class="value" data-stat="fixtures_total">--</span>
+          <span class="label">bullets.count</span><span class="value" data-stat="bullets_count">--</span>
+          <span class="label">joints.total</span><span class="value" data-stat="joints_total">--</span>
+        </div>
+      </div>
+      <!-- COLLISION -->
+      <div class="telemetry-group">
+        <h4>COLLISION</h4>
+        <div class="telemetry-grid">
+          <span class="label">contacts.active</span><span class="value" data-stat="contacts_active">--</span>
+          <span class="label">contacts.new/s</span><span class="value" data-stat="contacts_new_per_s">--</span>
+          <span class="label">contacts.destroyed/s</span><span class="value" data-stat="contacts_destroyed_per_s">--</span>
+          <span class="label">broadphase.proxies</span><span class="value na">N/A</span>
+          <span class="label">broadphase.pairs</span><span class="value na">N/A</span>
+          <span class="label">toi.events</span><span class="value na">N/A</span>
+        </div>
+      </div>
+       <!-- SLEEP / CHURN -->
+      <div class="telemetry-group">
+        <h4>SLEEP / CHURN</h4>
+        <div class="telemetry-grid">
+            <span class="label">wakeups.per_s</span><span class="value" data-stat="wakeups_per_s">--</span>
+            <span class="label">sleepdowns.per_s</span><span class="value" data-stat="sleepdowns_per_s">--</span>
+            <span class="label">awake_ratio</span><span class="value" data-stat="awake_ratio">--</span>
+        </div>
+      </div>
+      <!-- IMPULSES -->
+      <div class="telemetry-group">
+        <h4>CONTACT IMPULSES</h4>
+        <div class="telemetry-grid">
+          <span class="label">normal_impulse.avg</span><span class="value" data-stat="normal_impulse_avg">--</span>
+          <span class="label">normal_impulse.p95</span><span class="value" data-stat="normal_impulse_p95">--</span>
+          <span class="label">damage_events</span><span class="value" data-stat="damage_events">--</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- Link to the main application script -->
   <script src="script.js" defer></script>
 </body>
