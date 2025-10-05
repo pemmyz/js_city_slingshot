@@ -55,13 +55,57 @@ html, body {
 .close-btn:hover { background: #374151; }
 
 /* --- Performance Panel --- */
-#perf-panel { position: fixed; top: 0; right: 0; width: 320px; z-index: 20; display: flex; align-items: flex-start; transform: translateX(100%); transition: transform 0.3s ease-in-out; color: #cbd5e1; }
-#perf-panel.open { transform: translateX(0); }
-#perf-handle { writing-mode: vertical-rl; text-orientation: mixed; background: rgba(15, 23, 42, 0.7); backdrop-filter: blur(6px); padding: 12px 4px; border-radius: 12px 0 0 12px; cursor: pointer; font-size: 12px; text-transform: uppercase; letter-spacing: 1px; display: flex; align-items: center; gap: 6px; box-shadow: -4px 4px 15px rgba(0,0,0,0.2); border: 1px solid #374151; border-right: none; margin-top: 60px; }
+#perf-panel { 
+  position: fixed; 
+  top: 0; 
+  right: 0; 
+  height: 100%;
+  z-index: 20; 
+  display: flex; 
+  align-items: flex-start; 
+  transform: translateX(calc(100% - 28px)); /* Start with handle visible */
+  transition: transform 0.3s ease-in-out; 
+  color: #cbd5e1; 
+  pointer-events: none; /* Allow clicks to pass through container */
+}
+#perf-panel.open { 
+  transform: translateX(0); 
+}
+#perf-panel.open, #perf-panel > * {
+  pointer-events: auto; /* Re-enable events for panel and its children */
+}
+#perf-handle { 
+  writing-mode: vertical-rl; 
+  text-orientation: mixed; 
+  background: rgba(15, 23, 42, 0.7); 
+  backdrop-filter: blur(6px); 
+  padding: 12px 4px; 
+  border-radius: 12px 0 0 12px; 
+  cursor: pointer; 
+  font-size: 12px; 
+  text-transform: uppercase; 
+  letter-spacing: 1px; 
+  display: flex; 
+  align-items: center; 
+  gap: 6px; 
+  box-shadow: -4px 4px 15px rgba(0,0,0,0.2); 
+  border: 1px solid #374151; 
+  border-right: none; 
+  margin-top: 80px; /* POSITIONING: Set distance from top */
+}
 #perf-handle:hover { background: rgba(30, 41, 59, 0.8); }
 #perf-handle span { transform: rotate(180deg); }
 #perf-handle span:first-child { color: #f59e0b; }
-#perf-content { width: 100%; height: 100vh; overflow-y: auto; background: rgba(15, 23, 42, 0.85); backdrop-filter: blur(8px); padding: 16px; border-left: 1px solid #374151; box-shadow: -6px 0 25px rgba(0,0,0,0.3); }
+#perf-content { 
+  width: 320px; 
+  height: 100vh; 
+  overflow-y: auto; 
+  background: rgba(15, 23, 42, 0.85); 
+  backdrop-filter: blur(8px); 
+  padding: 16px; 
+  border-left: 1px solid #374151; 
+  box-shadow: -6px 0 25px rgba(0,0,0,0.3); 
+}
 .panel-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
 .panel-header h3 { margin: 0; font-size: 16px; color: #f8fafc; }
 #panel-close-btn { background: none; border: none; color: #94a3b8; font-size: 24px; cursor: pointer; }
@@ -95,13 +139,57 @@ input:checked + .slider:before { transform: translateX(14px); }
 .telemetry-grid .value { font-weight: bold; color: #f8fafc; font-family: monospace; text-align: right; }
 
 /* --- Detailed Telemetry Panel --- */
-#telemetry-panel { position: fixed; top: 240px; right: 0; z-index: 19; display: flex; align-items: flex-start; transform: translateX(calc(100% - 28px)); transition: transform 0.3s ease-in-out; }
-#telemetry-panel.open { transform: translateX(0); }
-#telemetry-handle { writing-mode: vertical-rl; text-orientation: mixed; background: rgba(15, 23, 42, 0.7); backdrop-filter: blur(6px); padding: 12px 4px; border-radius: 12px 0 0 12px; cursor: pointer; font-size: 12px; text-transform: uppercase; letter-spacing: 1px; display: flex; align-items: center; gap: 6px; box-shadow: -4px 4px 15px rgba(0,0,0,0.2); border: 1px solid #374151; border-right: none; }
+#telemetry-panel { 
+  position: fixed; 
+  top: 350px; /* MOVED DOWN: Was 220px, moved down to create a gap */
+  right: 0; 
+  z-index: 19; 
+  display: flex; 
+  align-items: flex-start; 
+  transform: translateX(calc(100% - 28px)); 
+  transition: transform 0.3s ease-in-out; 
+  pointer-events: none;
+}
+#telemetry-panel.open { 
+  transform: translateX(0); 
+}
+#telemetry-panel.open, #telemetry-panel > * {
+  pointer-events: auto;
+}
+#telemetry-handle { 
+  writing-mode: vertical-rl; 
+  text-orientation: mixed; 
+  background: rgba(15, 23, 42, 0.7); 
+  backdrop-filter: blur(6px); 
+  padding: 12px 4px; 
+  border-radius: 12px 0 0 12px; 
+  cursor: pointer; 
+  font-size: 12px; 
+  text-transform: uppercase; 
+  letter-spacing: 1px; 
+  display: flex; 
+  align-items: center; 
+  gap: 6px; 
+  box-shadow: -4px 4px 15px rgba(0,0,0,0.2); 
+  border: 1px solid #374151; 
+  border-right: none; 
+}
 #telemetry-handle:hover { background: rgba(30, 41, 59, 0.8); }
 #telemetry-handle span { transform: rotate(180deg); }
 #telemetry-handle span:first-child { color: #84cc16; }
-#telemetry-content { width: 280px; max-height: calc(100vh - 260px); overflow-y: auto; background: rgba(15, 23, 42, 0.8); backdrop-filter: blur(6px); padding: 12px 16px; border-radius: 12px 0 0 12px; font-size: 12px; color: #cbd5e1; border: 1px solid #374151; border-right: none; }
+#telemetry-content { 
+  width: 280px; 
+  max-height: calc(100vh - 370px); /* ADJUSTED: Account for new top position */
+  overflow-y: auto; 
+  background: rgba(15, 23, 42, 0.8); 
+  backdrop-filter: blur(6px); 
+  padding: 12px 16px; 
+  border-radius: 12px 0 0 12px; 
+  font-size: 12px; 
+  color: #cbd5e1; 
+  border: 1px solid #374151; 
+  border-right: none; 
+}
 #telemetry-content h3 { margin: 0 0 12px; font-size: 14px; color: #f8fafc; text-align: center; }
 .telemetry-group { margin-bottom: 12px; }
 .telemetry-group h4 { margin: 0 0 6px; font-size: 11px; text-transform: uppercase; color: #64748b; border-bottom: 1px solid #374151; padding-bottom: 3px; }

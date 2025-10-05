@@ -84,8 +84,6 @@
     }
 
     updateFromSettings() {
-      // FIX: Only set world properties that can be changed at runtime.
-      // Sleep tolerances are compile-time constants in Planck.js and cannot be set on `pl.Settings`.
       this.world.setAllowSleeping(this.settings.allowSleep);
       this.grid.cellSize = this.settings.gridCellSize;
     }
@@ -193,7 +191,7 @@
       this.panel.querySelectorAll('.perf-select').forEach(el => this.createSelect(el));
       this.panel.querySelectorAll('[data-stat]').forEach(el => this.dom[el.dataset.stat] = el);
       this.updateAllControls();
-      this.disableUnsupportedControls(); // FIX: Call method to disable controls
+      this.disableUnsupportedControls();
     }
     
     createSlider(container) {
@@ -249,7 +247,6 @@
       }
     }
 
-    // FIX: Add this method to disable non-functional sliders
     disableUnsupportedControls() {
         const unsupported = ['timeToSleep', 'linearSleepTolerance', 'angularSleepTolerance'];
         unsupported.forEach(setting => {
@@ -385,7 +382,6 @@
       }
     }
     updateDOM() {
-      // FIX: Correctly reference and update DOM elements
       for (const key in this.stats) {
           if (this.dom[key]) {
               const value = this.stats[key];
@@ -474,11 +470,12 @@
     if (APP.bird) {
         if (enableDrag) applyAirDrag(APP.bird);
         const isOffScreen = APP.bird.getPosition().y < -5 || APP.bird.getPosition().x > 50;
-        const isStopped = APP.slingshot.launched && !APP.bird.isAwake();
+        const isStopped = !APP.bird.isAwake();
         if ((isOffScreen || isStopped) && !APP.world.isLocked()) {
             APP.physicsManager.whitelist.delete(APP.bird);
             APP.world.destroyBody(APP.bird); 
             APP.bird = null;
+            APP.slingshot.launched = false;
         }
     }
   }
@@ -529,7 +526,12 @@
   }
   
   function spawnBird(pos, v0) {
-    if (APP.bird) APP.world.destroyBody(APP.bird);
+    if (APP.bird) {
+        if (!APP.world.isLocked()) {
+            APP.physicsManager.whitelist.delete(APP.bird);
+            APP.world.destroyBody(APP.bird);
+        }
+    }
     APP.bird = APP.world.createDynamicBody({ position: pos, bullet: APP.physicsManager.settings.enableCCDForBullets, userData: { type: 'bird' } });
     APP.bird.createFixture(pl.Circle(0.18), { density: 2.5, friction: 0.6, restitution: 0.2 });
     APP.bird.setLinearVelocity(v0);
@@ -538,7 +540,14 @@
   
   function applyAirDrag(body) { if (!body) return; const v = body.getLinearVelocity(), speed = v.length(); if (speed < 0.01) return; const dragMag = 0.5 * 1.2 * 0.47 * (Math.PI * 0.18 * 0.18) * speed * speed; const Fd = Vec2.mul(v, -dragMag / (speed||1)); body.applyForceToCenter(Fd, true); }
   
-  function beginAim(evt) { if (APP.bird) { APP.world.destroyBody(APP.bird); APP.bird = null; } APP.slingshot.launched = false; APP.slingshot.isAiming = true; APP.slingshot.showDrag = true; APP.slingshot.pointerWorld = getWorldFromEvent(evt); evt.preventDefault(); }
+  function beginAim(evt) {
+    APP.slingshot.launched = false;
+    APP.slingshot.isAiming = true;
+    APP.slingshot.showDrag = true;
+    APP.slingshot.pointerWorld = getWorldFromEvent(evt);
+    evt.preventDefault();
+  }
+
   function moveAim(evt) { if (!APP.slingshot.isAiming) return; APP.slingshot.pointerWorld = getWorldFromEvent(evt); evt.preventDefault(); }
   function endAim(evt) {
     if (!APP.slingshot.isAiming) return;
@@ -621,31 +630,93 @@
         else if (f.getShape().getType() === 'polygon') drawPolygon(b, f.getShape());
       }
     }
-    if (!APP.slingshot.launched) drawSlingshot();
+    drawSlingshotAndMarker();
   }
   
-  function drawSlingshot() {
-    const { ctx, dpr } = APP;
-    const { base, pointerWorld, showDrag } = APP.slingshot;
-    const maxPull = 1.25, kSpeed = 18.0, gamma = 1.10, minSpeed = 1.5, mouthOffset = 0.16;
-    let pull = Vec2.sub(pointerWorld, base);
-    if (pull.length() > maxPull) { pull.normalize(); pull = Vec2.mul(pull, maxPull); }
-    const pullLen = pull.length();
-    if (showDrag) { const pA = worldToScreen(base), pB = worldToScreen(Vec2.add(base, pull)); ctx.strokeStyle = '#f59e0b'; ctx.lineWidth = 4*dpr; ctx.beginPath(); ctx.moveTo(pA.x, pA.y); ctx.lineTo(pB.x, pB.y); ctx.stroke(); }
-    const launchDir = Vec2.mul(pull, -1);
-    const dir = Vec2.clone(launchDir);
-    if (dir.length() > 0) dir.normalize();
-    const mouth = Vec2.add(base, Vec2.mul(dir, mouthOffset));
-    const mouthPix = worldToScreen(mouth); ctx.fillStyle = '#ef4444'; ctx.beginPath(); ctx.arc(mouthPix.x, mouthPix.y, 9*dpr, 0, Math.PI*2); ctx.fill();
-    if (pullLen > 0.1) {
-      let speed = Math.max(minSpeed, kSpeed * Math.pow(pullLen, gamma));
-      const v0 = Vec2.mul(dir, speed), pts = sampleTrajectory(mouth, v0, 36, 0.05);
-      ctx.fillStyle = '#e5e7eb'; pts.forEach(p => { const s = worldToScreen(p); ctx.beginPath(); ctx.arc(s.x, s.y, 3*dpr, 0, Math.PI * 2); ctx.fill(); });
-    }
+  function drawSlingshotAndMarker() {
+      const { ctx, dpr } = APP;
+      const { base, pointerWorld, isAiming } = APP.slingshot;
+      const mouthOffset = 0.16;
+      const radius = 9 * dpr;
+
+      // --- 1. ALWAYS draw the static marker at the home position ---
+      const markerDir = Vec2(1, 0); 
+      const markerMouth = Vec2.add(base, Vec2.mul(markerDir, mouthOffset));
+      const mouthPix = worldToScreen(markerMouth);
+      
+      ctx.fillStyle = '#ef4444';
+      ctx.beginPath();
+      ctx.arc(mouthPix.x, mouthPix.y, radius, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = Math.max(1, 2 * dpr);
+      const crossSize = radius * 0.7;
+      ctx.beginPath();
+      ctx.moveTo(mouthPix.x - crossSize, mouthPix.y);
+      ctx.lineTo(mouthPix.x + crossSize, mouthPix.y);
+      ctx.moveTo(mouthPix.x, mouthPix.y - crossSize);
+      ctx.lineTo(mouthPix.x, mouthPix.y + crossSize);
+      ctx.stroke();
+
+      // --- 2. ONLY draw aiming visuals if aiming ---
+      if (isAiming) {
+          const maxPull = 1.25, kSpeed = 18.0, gamma = 1.10, minSpeed = 1.5;
+          let pull = Vec2.sub(pointerWorld, base);
+          if (pull.length() > maxPull) { pull.normalize(); pull = Vec2.mul(pull, maxPull); }
+          const pullLen = pull.length();
+
+          const pA = worldToScreen(base), pB = worldToScreen(Vec2.add(base, pull));
+          ctx.strokeStyle = '#f59e0b';
+          ctx.lineWidth = 4 * dpr;
+          ctx.beginPath();
+          ctx.moveTo(pA.x, pA.y);
+          ctx.lineTo(pB.x, pB.y);
+          ctx.stroke();
+
+          const launchDir = Vec2.mul(pull, -1);
+          const dir = Vec2.clone(launchDir);
+          if (dir.length() > 0) dir.normalize();
+
+          const aimingMouth = Vec2.add(base, Vec2.mul(dir, mouthOffset));
+          const aimingMouthPix = worldToScreen(aimingMouth);
+          
+          // Draw the plain red ghost projectile (it will draw over the static marker)
+          ctx.fillStyle = '#ef4444';
+          ctx.beginPath();
+          ctx.arc(aimingMouthPix.x, aimingMouthPix.y, radius, 0, Math.PI * 2);
+          ctx.fill();
+
+          if (pullLen > 0.1) {
+              let speed = Math.max(minSpeed, kSpeed * Math.pow(pullLen, gamma));
+              const v0 = Vec2.mul(dir, speed);
+              const pts = sampleTrajectory(aimingMouth, v0, 36, 0.05);
+              ctx.fillStyle = '#e5e7eb';
+              pts.forEach(p => { const s = worldToScreen(p); ctx.beginPath(); ctx.arc(s.x, s.y, 3 * dpr, 0, Math.PI * 2); ctx.fill(); });
+          }
+      }
   }
 
   function sampleTrajectory(p0, v0, s, dt) { const pts = []; for (let i=1; i<=s; i++) { const t=i*dt, x=p0.x+v0.x*t, y=p0.y+v0.y*t + 0.5*-10*t*t; if(y<0)break; pts.push(Vec2(x, y)); } return pts; }
-  function drawCircle(body, circle) { const p=body.getPosition(), r=circle.m_radius*APP.PPM*APP.dpr; const s=worldToScreen(p); APP.ctx.save(); APP.ctx.translate(s.x, s.y); APP.ctx.rotate(-body.getAngle()); APP.ctx.fillStyle='#ef4444'; APP.ctx.beginPath(); APP.ctx.arc(0,0,r,0,Math.PI*2); APP.ctx.fill(); APP.ctx.restore(); }
+  
+  // **MODIFIED**: This now draws a plain red circle for the bird.
+  function drawCircle(body, circle) {
+    const p = body.getPosition();
+    const r = circle.m_radius * APP.PPM * APP.dpr;
+    const s = worldToScreen(p);
+    
+    if (body.getUserData() && body.getUserData().type === 'bird') {
+        APP.ctx.save();
+        APP.ctx.translate(s.x, s.y);
+        APP.ctx.rotate(-body.getAngle());
+        APP.ctx.fillStyle = '#ef4444'; // Just red
+        APP.ctx.beginPath();
+        APP.ctx.arc(0, 0, r, 0, Math.PI * 2);
+        APP.ctx.fill();
+        APP.ctx.restore();
+    }
+  }
+  
   function drawPolygon(body, poly) { 
     const xf = body.getTransform(); APP.ctx.beginPath(); 
     for (let i=0;i<poly.m_vertices.length;i++) { const v=pl.Transform.mul(xf, poly.m_vertices[i]); const s=worldToScreen(v); if (i===0) APP.ctx.moveTo(s.x, s.y); else APP.ctx.lineTo(s.x, s.y); } APP.ctx.closePath(); 
