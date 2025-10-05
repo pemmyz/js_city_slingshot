@@ -3,12 +3,9 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Slingshot — Planck.js</title>
+  <title>Slingshot Performance Demo — Planck.js</title>
   
-  <!-- Link to the external stylesheet -->
   <link rel="stylesheet" href="style.css">
-
-  <!-- Planck.js (Box2D for JS) from a CDN -->
   <script src="https://cdn.jsdelivr.net/npm/planck-js@0.2.7/dist/planck.min.js"></script>
 </head>
 <body>
@@ -16,8 +13,8 @@
   
   <div id="ui">
     <h1>Slingshot — Planck.js</h1>
-    <p>Drag from the sling, release to launch. Dots preview the ballistic path.<br/>
-       <span class="kbd">R</span> reset • <span class="kbd">D</span> drag • <span class="kbd">H</span> destructible</p>
+    <p>Drag sling to launch. Dots preview the ballistic path.<br/>
+       <span class="kbd">R</span> reset • <span class="kbd">D</span> drag • <span class="kbd">H</span> destructible • <span class="kbd">P</span> performance</p>
     
     <div id="controls">
       <h2>Building Controls <span class="note">(Press 'R' to apply)</span></h2>
@@ -38,12 +35,12 @@
       </div>
       <div class="slider-group">
         <label for="min-height-slider">Min Height</label>
-        <input type="range" id="min-height-slider" min="5" max="30" value="10">
+        <input type="range" id="min-height-slider" min="5" max="40" value="10">
         <span id="min-height-value">10</span>
       </div>
       <div class="slider-group">
         <label for="max-height-slider">Max Height</label>
-        <input type="range" id="max-height-slider" min="5" max="30" value="10">
+        <input type="range" id="max-height-slider" min="5" max="40" value="10">
         <span id="max-height-value">10</span>
       </div>
     </div>
@@ -59,94 +56,154 @@
       <p><strong>Objective:</strong> Knock down all the buildings!</p>
       <ul>
         <li><strong>Launch:</strong> Click and drag from the brown sling on the left. Release to fire.</li>
-        <li><strong>Reset Scene (<span class="kbd">R</span>):</strong> Resets the simulation, applying any new building settings from the sliders.</li>
+        <li><strong>Reset Scene (<span class="kbd">R</span>):</strong> Resets the simulation, applying any new building settings.</li>
         <li><strong>Toggle Air Drag (<span class="kbd">D</span>):</strong> Toggles air resistance on the projectile.</li>
         <li><strong>Toggle Destructible Mode (<span class="kbd">H</span>):</strong> Toggles whether blocks take damage and break.</li>
-        <li><strong>Help Menu (<span class="kbd">H</span>):</strong> Toggles this help window.</li>
+        <li><strong>Performance Panel (<span class="kbd">P</span>):</strong> Toggles the advanced physics performance panel.</li>
       </ul>
-      <h3>Building Controls</h3>
-      <p>Use the sliders in the top-left panel to customize the city generation. After changing the values, press the <span class="kbd">R</span> key to generate a new city with those parameters.</p>
     </div>
   </div>
 
-  <!-- Telemetry Panel -->
+  <!-- NEW Performance & Controls Panel -->
+  <div id="perf-panel">
+    <div id="perf-handle">
+      <span>&#9881;</span>
+      <span>P</span><span>e</span><span>r</span><span>f</span><span>o</span><span>r</span><span>m</span><span>a</span><span>n</span><span>c</span><span>e</span>
+    </div>
+    <div id="perf-content">
+      <div class="panel-header">
+        <h3>Physics Performance</h3>
+        <button id="panel-close-btn">&times;</button>
+      </div>
+      
+      <!-- Profiles -->
+      <div class="perf-group">
+        <h4>Profile</h4>
+        <div class="profile-selector">
+          <button data-profile="original" class="active">Original</button>
+          <button data-profile="neighbor">Neighbor-Only</button>
+          <button data-profile="aggressive">Aggressive LOD</button>
+        </div>
+      </div>
+      
+      <!-- General Settings -->
+      <div class="perf-group">
+        <h4 class="collapsible active">General</h4>
+        <div class="collapsible-content">
+          <div class="perf-slider" data-setting="velocityIterations" data-label="Vel Iterations" data-min="2" data-max="20" data-step="1"></div>
+          <div class="perf-slider" data-setting="positionIterations" data-label="Pos Iterations" data-min="1" data-max="10" data-step="1"></div>
+          <div class="perf-select" data-setting="hz" data-label="Physics Hz" data-options="60,45,30"></div>
+          <div class="perf-toggle" data-setting="enableCCDForBullets" data-label="Bullet CCD"></div>
+        </div>
+      </div>
+
+      <!-- Neighbor Filter -->
+      <div class="perf-group">
+        <h4 class="collapsible">Neighbor Filter</h4>
+        <div class="collapsible-content">
+          <div class="perf-toggle" data-setting="enableNeighborFilter" data-label="Enable Filter"></div>
+          <div class="perf-slider" data-setting="gridCellSize" data-label="Grid Cell Size (m)" data-min="0.5" data-max="2.0" data-step="0.05"></div>
+          <div class="perf-slider" data-setting="neighborRadiusCells" data-label="Neighbor Radius" data-min="0" data-max="2" data-step="1"></div>
+        </div>
+      </div>
+
+      <!-- Aggressive LOD -->
+      <div class="perf-group">
+        <h4 class="collapsible">Aggressive LOD</h4>
+        <div class="collapsible-content">
+          <div class="perf-toggle" data-setting="enableDeactivation" data-label="Enable LOD"></div>
+          <div class="perf-slider" data-setting="maxActiveDistance" data-label="Max Active Dist (m)" data-min="10" data-max="200" data-step="5"></div>
+          <div class="perf-slider" data-setting="reactivateMargin" data-label="Reactivate Margin (m)" data-min="1" data-max="20" data-step="1"></div>
+        </div>
+      </div>
+      
+      <!-- Sleep -->
+      <div class="perf-group">
+        <h4 class="collapsible">Sleep Tuning</h4>
+        <div class="collapsible-content">
+          <div class="perf-toggle" data-setting="allowSleep" data-label="Allow Sleep"></div>
+          <div class="perf-slider" data-setting="timeToSleep" data-label="Time to Sleep (s)" data-min="0.1" data-max="5.0" data-step="0.1"></div>
+          <div class="perf-slider" data-setting="linearSleepTolerance" data-label="Linear Tolerance" data-min="0.01" data-max="0.5" data-step="0.01"></div>
+          <div class="perf-slider" data-setting="angularSleepTolerance" data-label="Angular Tolerance" data-min="0.01" data-max="0.5" data-step="0.01"></div>
+        </div>
+      </div>
+      
+      <!-- Telemetry -->
+      <div class="perf-group telemetry">
+        <h4 class="collapsible active">Live Telemetry</h4>
+        <div class="collapsible-content">
+          <div class="telemetry-grid perf-telemetry-grid">
+            <span class="label">FPS</span><span class="value" data-stat="fps">--</span>
+            <span class="label">Physics Step (ms)</span><span class="value" data-stat="step_ms">--</span>
+            <span class="label">Substeps / frame</span><span class="value" data-stat="substeps">--</span>
+            <span class="label">Bodies (Active)</span><span class="value" data-stat="bodies_active">--</span>
+            <span class="label">Deactivated</span><span class="value" data-stat="bodies_deactivated">--</span>
+            <span class="label">Contacts (Solved)</span><span class="value" data-stat="contacts_solved">--</span>
+            <span class="label">Contacts (Disabled)</span><span class="value" data-stat="contacts_disabled">--</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- RESTORED Old Telemetry Panel -->
   <div id="telemetry-panel">
     <div id="telemetry-handle">
-      <span>&#9881;</span>
-      <span>P</span>
-      <span>h</span>
-      <span>y</span>
-      <span>s</span>
-      <span>i</span>
-      <span>c</span>
-      <span>s</span>
+      <span>&#128202;</span>
+      <span>D</span><span>e</span><span>t</span><span>a</span><span>i</span><span>l</span><span>s</span>
     </div>
     <div id="telemetry-content">
-      <h3>Physics Telemetry</h3>
-      <!-- WORLD / STEP -->
+      <h3>Detailed Telemetry</h3>
       <div class="telemetry-group">
         <h4>WORLD / STEP</h4>
         <div class="telemetry-grid">
-          <span class="label">step.time_ms</span><span class="value" data-stat="step_time_ms">--</span>
-          <span class="label"> (p95)</span><span class="value" data-stat="step_time_p95">--</span>
-          <span class="label">step.hz_target</span><span class="value" data-stat="step_hz_target">--</span>
-          <span class="label">step.dt</span><span class="value" data-stat="step_dt">--</span>
-          <span class="label">step.substeps</span><span class="value" data-stat="step_substeps">--</span>
-          <span class="label">step.accumulator</span><span class="value" data-stat="step_accumulator">--</span>
-          <span class="label">step.time_budget_hit</span><span class="value" data-stat="step_budget_hit">--</span>
-          <span class="label">...velocity (ms)</span><span class="value na">N/A</span>
-          <span class="label">...position (ms)</span><span class="value na">N/A</span>
-          <span class="label">...toi (ms)</span><span class="value na">N/A</span>
+          <span class="label">step.time_ms</span><span class="value" data-stat-detailed="step_time_ms">--</span>
+          <span class="label"> (p95)</span><span class="value" data-stat-detailed="step_time_p95">--</span>
+          <span class="label">step.hz_target</span><span class="value" data-stat-detailed="step_hz_target">--</span>
+          <span class="label">step.dt</span><span class="value" data-stat-detailed="step_dt">--</span>
+          <span class="label">step.substeps</span><span class="value" data-stat-detailed="step_substeps">--</span>
+          <span class="label">step.accumulator</span><span class="value" data-stat-detailed="step_accumulator">--</span>
+          <span class="label">step.time_budget_hit</span><span class="value" data-stat-detailed="step_budget_hit">--</span>
         </div>
       </div>
-      <!-- BODIES / FIXTURES -->
       <div class="telemetry-group">
         <h4>BODIES / FIXTURES</h4>
         <div class="telemetry-grid">
-          <span class="label">bodies.total</span><span class="value" data-stat="bodies_total">--</span>
-          <span class="label">bodies.dynamic</span><span class="value" data-stat="bodies_dynamic">--</span>
-          <span class="label">bodies.awake</span><span class="value" data-stat="bodies_awake">--</span>
-          <span class="label">bodies.sleeping</span><span class="value" data-stat="bodies_sleeping">--</span>
-          <span class="label">sleep_ratio</span><span class="value" data-stat="bodies_sleep_ratio">--</span>
-          <span class="label">fixtures.total</span><span class="value" data-stat="fixtures_total">--</span>
-          <span class="label">bullets.count</span><span class="value" data-stat="bullets_count">--</span>
-          <span class="label">joints.total</span><span class="value" data-stat="joints_total">--</span>
+          <span class="label">bodies.total</span><span class="value" data-stat-detailed="bodies_total">--</span>
+          <span class="label">bodies.dynamic</span><span class="value" data-stat-detailed="bodies_dynamic">--</span>
+          <span class="label">bodies.awake</span><span class="value" data-stat-detailed="bodies_awake">--</span>
+          <span class="label">bodies.sleeping</span><span class="value" data-stat-detailed="bodies_sleeping">--</span>
+          <span class="label">sleep_ratio</span><span class="value" data-stat-detailed="bodies_sleep_ratio">--</span>
+          <span class="label">fixtures.total</span><span class="value" data-stat-detailed="fixtures_total">--</span>
         </div>
       </div>
-      <!-- COLLISION -->
       <div class="telemetry-group">
         <h4>COLLISION</h4>
         <div class="telemetry-grid">
-          <span class="label">contacts.active</span><span class="value" data-stat="contacts_active">--</span>
-          <span class="label">contacts.new/s</span><span class="value" data-stat="contacts_new_per_s">--</span>
-          <span class="label">contacts.destroyed/s</span><span class="value" data-stat="contacts_destroyed_per_s">--</span>
-          <span class="label">broadphase.proxies</span><span class="value na">N/A</span>
-          <span class="label">broadphase.pairs</span><span class="value na">N/A</span>
-          <span class="label">toi.events</span><span class="value na">N/A</span>
+          <span class="label">contacts.active</span><span class="value" data-stat-detailed="contacts_active">--</span>
+          <span class="label">contacts.new/s</span><span class="value" data-stat-detailed="contacts_new_per_s">--</span>
+          <span class="label">contacts.destroyed/s</span><span class="value" data-stat-detailed="contacts_destroyed_per_s">--</span>
         </div>
       </div>
-       <!-- SLEEP / CHURN -->
       <div class="telemetry-group">
         <h4>SLEEP / CHURN</h4>
         <div class="telemetry-grid">
-            <span class="label">wakeups.per_s</span><span class="value" data-stat="wakeups_per_s">--</span>
-            <span class="label">sleepdowns.per_s</span><span class="value" data-stat="sleepdowns_per_s">--</span>
-            <span class="label">awake_ratio</span><span class="value" data-stat="awake_ratio">--</span>
+            <span class="label">wakeups.per_s</span><span class="value" data-stat-detailed="wakeups_per_s">--</span>
+            <span class="label">sleepdowns.per_s</span><span class="value" data-stat-detailed="sleepdowns_per_s">--</span>
+            <span class="label">awake_ratio</span><span class="value" data-stat-detailed="awake_ratio">--</span>
         </div>
       </div>
-      <!-- IMPULSES -->
       <div class="telemetry-group">
         <h4>CONTACT IMPULSES</h4>
         <div class="telemetry-grid">
-          <span class="label">normal_impulse.avg</span><span class="value" data-stat="normal_impulse_avg">--</span>
-          <span class="label">normal_impulse.p95</span><span class="value" data-stat="normal_impulse_p95">--</span>
-          <span class="label">damage_events</span><span class="value" data-stat="damage_events">--</span>
+          <span class="label">normal_impulse.avg</span><span class="value" data-stat-detailed="normal_impulse_avg">--</span>
+          <span class="label">normal_impulse.p95</span><span class="value" data-stat-detailed="normal_impulse_p95">--</span>
+          <span class="label">damage_events/s</span><span class="value" data-stat-detailed="damage_events">--</span>
         </div>
       </div>
     </div>
   </div>
 
-  <!-- Link to the main application script -->
   <script src="script.js" defer></script>
 </body>
 </html>

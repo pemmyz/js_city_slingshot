@@ -1,651 +1,663 @@
-/**
- * A performance monitor that tracks FPS, physics objects, collisions,
- * and displays a real-time FPS history graph.
- */
-class PerfMonitor {
-  constructor(world) {
-    this.world = world;
-    this.fpsHistory = [];
-    this.historySize = 100; // Store last 100 FPS readings
-    this.lastTime = performance.now();
-    this.frames = 0;
-    this.maxGraphFps = 70; // The FPS value that corresponds to the top of the graph
+(function() {
+  const pl = planck;
+  const Vec2 = pl.Vec2;
 
-    this.stats = {
-      fps: 0,
-      minFps: Infinity,
-      avgFps: 0,
-      medianFps: 0,
-      bodies: 0,
-      contacts: 0
-    };
+  // ----- Global App State -----
+  const APP = {
+    world: null,
+    physicsManager: null,
+    uiPanelManager: null,
+    physicsTelemetry: null,
+    // Game state
+    blocks: [],
+    bird: null,
+    boundaryBody: null,
+    destructibleMode: true,
+    bodiesToDestroy: [],
+    // Slingshot
+    slingshot: {
+      base: Vec2(3.0, 2.0), isAiming: false, showDrag: false,
+      pointerWorld: Vec2(3.0, 2.0), launched: false,
+    },
+    // Configs
+    buildingSettings: {
+      numBuildings: 1, minWidth: 6, maxWidth: 6, minHeight: 10, maxHeight: 10,
+    },
+    // Canvas & rendering
+    canvas: document.getElementById('c'),
+    ctx: null,
+    dpr: Math.max(1, window.devicePixelRatio || 1),
+    PPM: 50,
+    camera: { pos: Vec2(15, 8) }
+  };
+  APP.ctx = APP.canvas.getContext('2d');
 
-    this.createPanel();
-  }
-
-  createPanel() {
-    this.container = document.createElement('div');
-    this.container.id = 'perf-monitor';
-
-    const statsGrid = document.createElement('div');
-    statsGrid.className = 'perf-stats-grid';
-    
-    this.dom = {
-        fps: this.createStatElement(statsGrid, 'FPS'),
-        min: this.createStatElement(statsGrid, 'Min'),
-        avg: this.createStatElement(statsGrid, 'Avg'),
-        median: this.createStatElement(statsGrid, 'Median'),
-        bodies: this.createStatElement(statsGrid, 'Bodies'),
-        contacts: this.createStatElement(statsGrid, 'Contacts'),
-    };
-    
-    this.container.appendChild(statsGrid);
-    this.graphCanvas = document.createElement('canvas');
-    this.graphCanvas.id = 'perf-graph';
-    this.graphCanvas.width = this.historySize * 2;
-    this.graphCanvas.height = 60;
-    this.graphCtx = this.graphCanvas.getContext('2d');
-    this.container.appendChild(this.graphCanvas);
-    
-    document.body.appendChild(this.container);
-  }
-
-  createStatElement(parent, label) {
-    const el = document.createElement('div');
-    el.className = 'perf-stat';
-    const labelEl = document.createElement('span');
-    labelEl.className = 'label';
-    labelEl.textContent = label;
-    const valueEl = document.createElement('span');
-    valueEl.className = 'value';
-    valueEl.textContent = '--';
-    el.appendChild(labelEl);
-    el.appendChild(valueEl);
-    parent.appendChild(el);
-    return valueEl;
-  }
-
-  end() {
-    this.frames++;
-    const time = performance.now();
-
-    if (time >= this.lastTime + 1000) {
-      this.stats.fps = this.frames;
-      this.lastTime = time;
-      this.frames = 0;
-      this.fpsHistory.push(this.stats.fps);
-      if (this.fpsHistory.length > this.historySize) this.fpsHistory.shift();
-      this.calculateStats();
-      this.updateDOM();
+  /**
+   * Manages all physics settings, performance profiles, and advanced optimizations.
+   */
+  class PhysicsManager {
+    constructor(world) {
+      this.world = world;
+      this.grid = new SpatialHashGrid(1.0);
+      this.deactivatedBodies = new Map();
+      this.settings = this.getProfile('original');
+      this.telemetry = {
+        step_ms: 0, substeps: 0, bodies_active: 0, bodies_deactivated: 0,
+        contacts_solved: 0, contacts_disabled: 0, fps: 0,
+      };
+      this.lastStepTimes = [];
+      this.whitelist = new Set();
+      this.world.on('pre-solve', this.preSolve.bind(this));
     }
-  }
 
-  calculateStats() {
-    if (this.fpsHistory.length > 0) {
-        this.stats.minFps = Math.min(...this.fpsHistory);
-        const sum = this.fpsHistory.reduce((a, b) => a + b, 0);
-        this.stats.avgFps = Math.round(sum / this.fpsHistory.length);
-        const sorted = [...this.fpsHistory].sort((a, b) => a - b);
-        const mid = Math.floor(sorted.length / 2);
-        this.stats.medianFps = sorted.length % 2 === 0 
-          ? Math.round((sorted[mid - 1] + sorted[mid]) / 2)
-          : sorted[mid];
-    }
-    let dynamicBodyCount = 0;
-    for (let b = this.world.getBodyList(); b; b = b.getNext()) { if (b.isDynamic()) dynamicBodyCount++; }
-    this.stats.bodies = dynamicBodyCount;
-    this.stats.contacts = this.world.getContactCount();
-  }
-
-  updateDOM() {
-    this.dom.fps.textContent = this.stats.fps;
-    this.dom.min.textContent = this.stats.minFps === Infinity ? '--' : this.stats.minFps;
-    this.dom.avg.textContent = this.stats.avgFps;
-    this.dom.median.textContent = this.stats.medianFps;
-    this.dom.bodies.textContent = this.stats.bodies;
-    this.dom.contacts.textContent = this.stats.contacts;
-    this.drawGraph();
-  }
-  
-  drawGraph() {
-      const ctx = this.graphCtx; const w = this.graphCanvas.width; const h = this.graphCanvas.height;
-      const barWidth = w / this.historySize; ctx.clearRect(0, 0, w, h);
-      const lineY = h - (60 / this.maxGraphFps) * h;
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.1)'; ctx.fillRect(0, lineY, w, 1);
-      for (let i = 0; i < this.fpsHistory.length; i++) {
-          const fps = this.fpsHistory[i];
-          const barHeight = Math.min(h, (fps / this.maxGraphFps) * h);
-          if (fps >= 55) ctx.fillStyle = '#22c55e'; else if (fps >= 30) ctx.fillStyle = '#f59e0b'; else ctx.fillStyle = '#ef4444';
-          ctx.fillRect(i * barWidth, h - barHeight, barWidth, barHeight);
+    getProfile(name) {
+      const base = {
+        velocityIterations: 8, positionIterations: 3, hz: 60,
+        enableCCDForBullets: true, allowSleep: true, timeToSleep: 0.5,
+        linearSleepTolerance: 0.05, angularSleepTolerance: 0.05,
+      };
+      switch (name) {
+        case 'original':
+          return { ...base,
+            enableNeighborFilter: false, gridCellSize: 1.0, neighborRadiusCells: 1,
+            enableDeactivation: false, maxActiveDistance: 100, reactivateMargin: 10,
+          };
+        case 'neighbor':
+          return { ...base,
+            velocityIterations: 7, positionIterations: 2,
+            enableNeighborFilter: true, gridCellSize: 0.6, neighborRadiusCells: 1,
+            enableDeactivation: false, maxActiveDistance: 100, reactivateMargin: 10,
+          };
+        case 'aggressive':
+          return { ...base,
+            velocityIterations: 6, positionIterations: 2, hz: 45,
+            enableNeighborFilter: true, gridCellSize: 0.6, neighborRadiusCells: 1,
+            enableDeactivation: true, maxActiveDistance: 40, reactivateMargin: 5,
+          };
       }
-  }
-}
+    }
 
-/**
- * A detailed physics performance telemetry module.
- */
-class PhysicsTelemetry {
-  constructor(world, hz, damageThreshold) {
-    this.world = world;
-    this.hz = hz;
-    this.damageThreshold = damageThreshold;
+    applyProfile(name) {
+      this.settings = this.getProfile(name);
+      this.updateAllBodies();
+      this.updateFromSettings();
+    }
 
-    // --- State & buffers ---
-    this.stepTimeBuffer = []; // Ring buffer for p95
-    this.impulseBuffer = [];
-    this.bufferSize = 120; // 2 seconds at 60fps
-    this.lastUpdateTime = 0;
-    this.updateInterval = 250; // Update DOM 4 times per second
-
-    // --- Per-frame accumulators ---
-    this.frame = {
-      stepTime: 0,
-      substeps: 0,
-    };
-
-    // --- Per-second accumulators ---
-    this.second = {
-      damageEvents: 0,
-      wakeups: 0,
-      sleepdowns: 0,
-      contactsNew: 0,
-      contactsDestroyed: 0,
-    };
-    this.lastSecondTime = 0;
-    this.lastAwakeCount = 0;
-    this.lastContactCount = 0;
-
-    // --- Cached/snapshot values ---
-    this.stats = {};
-
-    this.initDOM();
-  }
+    updateFromSettings() {
+      // FIX: Only set world properties that can be changed at runtime.
+      // Sleep tolerances are compile-time constants in Planck.js and cannot be set on `pl.Settings`.
+      this.world.setAllowSleeping(this.settings.allowSleep);
+      this.grid.cellSize = this.settings.gridCellSize;
+    }
     
-  initDOM() {
-    this.dom = {};
-    const elements = document.querySelectorAll('#telemetry-content [data-stat]');
-    elements.forEach(el => {
-      this.dom[el.dataset.stat] = el;
-    });
+    updateAllBodies() {
+      for (const [body, data] of this.deactivatedBodies.entries()) {
+        if(body.m_world) body.setActive(true);
+      }
+      this.deactivatedBodies.clear();
+      if (APP.bird) {
+        APP.bird.setBullet(this.settings.enableCCDForBullets);
+      }
+    }
 
-    document.getElementById('telemetry-handle').addEventListener('click', () => {
-        document.getElementById('telemetry-panel').classList.toggle('open');
-    });
-  }
+    step(dt) {
+      const stepStart = performance.now();
+      this.world.step(dt, this.settings.velocityIterations, this.settings.positionIterations);
+      const stepTime = performance.now() - stepStart;
+      this.lastStepTimes.push(stepTime);
+      if (this.lastStepTimes.length > 10) this.lastStepTimes.shift();
+      this.telemetry.step_ms = this.lastStepTimes.reduce((a,b)=>a+b,0)/(this.lastStepTimes.length || 1);
+    }
 
-  // Called at the start of the main loop
-  beginFrame() {
-    this.frame.stepTime = 0;
-    this.frame.substeps = 0;
-  }
+    updatePostStep() {
+      this.telemetry.contacts_disabled = 0;
+      if (this.settings.enableNeighborFilter) this.updateGrid();
+      if (this.settings.enableDeactivation) this.updateLOD();
+    }
+
+    updateGrid() {
+      this.grid.clear();
+      for (let b = this.world.getBodyList(); b; b = b.getNext()) {
+        if (b.isDynamic() && b.isActive()) this.grid.add(b);
+      }
+    }
     
-  // Called immediately before world.step()
-  beginStep() {
-    this.stepStartTime = performance.now();
+    updateLOD() {
+      const camPos = APP.camera.pos;
+      for (let b = this.world.getBodyList(); b; b = b.getNext()) {
+        if (!b.isDynamic() || !b.isActive() || b.isAwake()) continue;
+        const dist = Vec2.distance(b.getPosition(), camPos);
+        if (dist > this.settings.maxActiveDistance && !this.deactivatedBodies.has(b)) {
+          b.setActive(false);
+          this.deactivatedBodies.set(b, true);
+        }
+      }
+      const reactivateDist = this.settings.maxActiveDistance - this.settings.reactivateMargin;
+      for (const [body, _] of this.deactivatedBodies.entries()) {
+        if (!body.m_world) { this.deactivatedBodies.delete(body); continue; }
+        const dist = Vec2.distance(body.getPosition(), camPos);
+        if (dist < reactivateDist) {
+          body.setActive(true);
+          this.deactivatedBodies.delete(body);
+        }
+      }
+    }
+
+    preSolve(contact) {
+      if (!this.settings.enableNeighborFilter) return;
+      const bA = contact.getFixtureA().getBody();
+      const bB = contact.getFixtureB().getBody();
+      if (this.whitelist.has(bA) || this.whitelist.has(bB) || !bA.isDynamic() || !bB.isDynamic()) return;
+      if (!this.grid.areNeighbors(bA, bB, this.settings.neighborRadiusCells)) {
+        contact.setEnabled(false);
+        this.telemetry.contacts_disabled++;
+      }
+    }
+    
+    collectTelemetry() {
+      let activeBodies = 0;
+      for (let b = this.world.getBodyList(); b; b = b.getNext()) {
+        if(b.isDynamic() && b.isActive()) activeBodies++;
+      }
+      this.telemetry.bodies_active = activeBodies;
+      this.telemetry.bodies_deactivated = this.deactivatedBodies.size;
+      this.telemetry.contacts_solved = this.world.getContactCount();
+    }
   }
 
-  // Called immediately after world.step()
-  endStep() {
-    this.frame.stepTime += performance.now() - this.stepStartTime;
-    this.frame.substeps++;
-  }
+  /** Manages the performance UI panel. */
+  class UIPanelManager {
+    constructor(physicsManager) {
+      this.physicsManager = physicsManager;
+      this.panel = document.getElementById('perf-panel');
+      this.dom = {}; this.init();
+    }
 
-  // Called from the 'post-solve' event
-  postSolve(impulse) {
-    const normalImpulse = impulse.normalImpulses[0];
-    if (normalImpulse > 0) {
-      this.impulseBuffer.push(normalImpulse);
-      if (this.impulseBuffer.length > this.bufferSize) this.impulseBuffer.shift();
-      if (normalImpulse > this.damageThreshold) this.second.damageEvents++;
+    init() {
+      document.getElementById('perf-handle').addEventListener('click', () => this.panel.classList.toggle('open'));
+      document.getElementById('panel-close-btn').addEventListener('click', () => this.panel.classList.remove('open'));
+      window.addEventListener('keydown', (e) => { if (e.key.toLowerCase() === 'p') this.panel.classList.toggle('open'); });
+
+      this.panel.querySelectorAll('.collapsible').forEach(h => h.addEventListener('click', () => h.classList.toggle('active')));
+      this.panel.querySelectorAll('[data-profile]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          this.physicsManager.applyProfile(btn.dataset.profile);
+          this.updateAllControls();
+          this.panel.querySelector('[data-profile].active').classList.remove('active');
+          btn.classList.add('active');
+        });
+      });
+      
+      this.panel.querySelectorAll('.perf-slider').forEach(el => this.createSlider(el));
+      this.panel.querySelectorAll('.perf-toggle').forEach(el => this.createToggle(el));
+      this.panel.querySelectorAll('.perf-select').forEach(el => this.createSelect(el));
+      this.panel.querySelectorAll('[data-stat]').forEach(el => this.dom[el.dataset.stat] = el);
+      this.updateAllControls();
+      this.disableUnsupportedControls(); // FIX: Call method to disable controls
+    }
+    
+    createSlider(container) {
+      const setting = container.dataset.setting, label = container.dataset.label;
+      const min = container.dataset.min, max = container.dataset.max, step = container.dataset.step;
+      container.classList.add('perf-control');
+      container.innerHTML = `<label>${label}</label><input type="range" min="${min}" max="${max}" step="${step}"><span class="value-display"></span>`;
+      const input = container.querySelector('input'), display = container.querySelector('.value-display');
+      input.addEventListener('input', () => {
+        const value = parseFloat(input.value);
+        this.physicsManager.settings[setting] = value;
+        display.textContent = value.toFixed(step < 1 ? 2 : 0);
+        this.physicsManager.updateFromSettings();
+      });
+      this.dom[setting] = { input, display };
+    }
+
+    createToggle(container) {
+      const setting = container.dataset.setting, labelText = container.dataset.label;
+      container.innerHTML = `<label>${labelText}</label><label class="switch"><input type="checkbox"><span class="slider"></span></label>`;
+      const input = container.querySelector('input');
+      input.addEventListener('change', () => {
+        this.physicsManager.settings[setting] = input.checked;
+        this.physicsManager.updateFromSettings();
+      });
+      this.dom[setting] = { input };
+    }
+
+    createSelect(container) {
+      const setting = container.dataset.setting, labelText = container.dataset.label;
+      const options = container.dataset.options.split(',');
+      container.innerHTML = `<label>${labelText}</label><select>${options.map(o => `<option value="${o}">${o}</option>`).join('')}</select>`;
+      const select = container.querySelector('select');
+      select.addEventListener('change', () => {
+        this.physicsManager.settings[setting] = parseInt(select.value);
+        this.physicsManager.updateFromSettings();
+      });
+      this.dom[setting] = { select };
+    }
+
+    updateAllControls() {
+      const settings = this.physicsManager.settings;
+      for (const key in settings) {
+        if (this.dom[key]) {
+          const control = this.dom[key], value = settings[key];
+          if (control.input) {
+            if (control.input.type === 'range') {
+              control.input.value = value;
+              control.display.textContent = value.toFixed(control.input.step < 1 ? 2 : 0);
+            } else if (control.input.type === 'checkbox') control.input.checked = value;
+          } else if (control.select) control.select.value = value;
+        }
+      }
+    }
+
+    // FIX: Add this method to disable non-functional sliders
+    disableUnsupportedControls() {
+        const unsupported = ['timeToSleep', 'linearSleepTolerance', 'angularSleepTolerance'];
+        unsupported.forEach(setting => {
+            if (this.dom[setting] && this.dom[setting].input) {
+                const controlElement = this.dom[setting].input.closest('.perf-slider');
+                if (controlElement) {
+                    controlElement.style.opacity = '0.5';
+                    controlElement.style.pointerEvents = 'none';
+                    controlElement.title = 'This setting is not runtime-configurable in Planck.js';
+                }
+            }
+        });
+    }
+    
+    updateTelemetry(telemetry) {
+      for(const key in telemetry) {
+        if (this.dom[key]) {
+          const value = telemetry[key], el = this.dom[key];
+          const text = typeof value === 'number' ? value.toFixed(key.includes('ms') ? 2 : 0) : value;
+          if (el.textContent !== text) el.textContent = text;
+        }
+      }
     }
   }
   
-  // Called at the end of the main loop
-  endFrame(accumulator) {
-    this.stepTimeBuffer.push(this.frame.stepTime);
-    if (this.stepTimeBuffer.length > this.bufferSize) this.stepTimeBuffer.shift();
+  /** A uniform grid spatial hash for broad-phase neighbor checks. */
+  class SpatialHashGrid {
+    constructor(cellSize) { this.cellSize = cellSize; this.grid = new Map(); }
+    clear() { this.grid.clear(); }
+    getKey(p) { return `${Math.floor(p.x / this.cellSize)},${Math.floor(p.y / this.cellSize)}`; }
+    add(body) {
+      const key = this.getKey(body.getPosition());
+      if (!this.grid.has(key)) this.grid.set(key, []);
+      this.grid.get(key).push(body);
+    }
+    areNeighbors(bodyA, bodyB, radius) {
+      const pA = bodyA.getPosition(), pB = bodyB.getPosition();
+      const cA = { x: Math.floor(pA.x / this.cellSize), y: Math.floor(pA.y / this.cellSize) };
+      const cB = { x: Math.floor(pB.x / this.cellSize), y: Math.floor(pB.y / this.cellSize) };
+      return Math.abs(cA.x - cB.x) <= radius && Math.abs(cA.y - cB.y) <= radius;
+    }
+  }
 
-    const now = performance.now();
-    
-    // --- Update per-second stats ---
-    if (now >= this.lastSecondTime + 1000) {
-        // Body stats (run once per second for performance)
-        let bodyCount = 0, dynamicCount = 0, awakeCount = 0, sleepingCount = 0, bulletCount = 0, fixtureCount = 0;
+  /** A detailed physics performance telemetry module. */
+  class PhysicsTelemetry {
+    constructor(world, damageThreshold) {
+      this.world = world;
+      this.damageThreshold = damageThreshold;
+      this.stepTimeBuffer = []; this.impulseBuffer = []; this.bufferSize = 120;
+      this.lastUpdateTime = 0; this.updateInterval = 250;
+      this.frame = { stepTime: 0, substeps: 0 };
+      this.second = { damageEvents: 0, wakeups: 0, sleepdowns: 0, contactsNew: 0, contactsDestroyed: 0 };
+      this.lastSecondTime = 0; this.lastAwakeCount = 0; this.lastContactCount = 0;
+      this.stats = {}; this.initDOM();
+    }
+    initDOM() {
+      this.dom = {};
+      const elements = document.querySelectorAll('#telemetry-content [data-stat-detailed]');
+      elements.forEach(el => { this.dom[el.dataset.statDetailed] = el; });
+      document.getElementById('telemetry-handle').addEventListener('click', () => {
+        document.getElementById('telemetry-panel').classList.toggle('open');
+      });
+    }
+    beginFrame() { this.frame.stepTime = 0; this.frame.substeps = 0; }
+    beginStep() { this.stepStartTime = performance.now(); }
+    endStep() { this.frame.stepTime += performance.now() - this.stepStartTime; this.frame.substeps++; }
+    postSolve(impulse) {
+      const normalImpulse = impulse.normalImpulses[0];
+      if (normalImpulse > 0) {
+        this.impulseBuffer.push(normalImpulse);
+        if (this.impulseBuffer.length > this.bufferSize) this.impulseBuffer.shift();
+        if (normalImpulse > this.damageThreshold) this.second.damageEvents++;
+      }
+    }
+    endFrame(accumulator) {
+      this.stepTimeBuffer.push(this.frame.stepTime);
+      if (this.stepTimeBuffer.length > this.bufferSize) this.stepTimeBuffer.shift();
+      const now = performance.now();
+      if (now >= this.lastSecondTime + 1000) {
+        let bodyCount = 0, dynamicCount = 0, awakeCount = 0, fixtureCount = 0;
         for (let b = this.world.getBodyList(); b; b = b.getNext()) {
-            bodyCount++;
-            if (b.isDynamic()) {
-                dynamicCount++;
-                if (b.isAwake()) awakeCount++; else sleepingCount++;
-            }
-            if(b.isBullet()) bulletCount++;
-            for (let f = b.getFixtureList(); f; f = f.getNext()) fixtureCount++;
+          bodyCount++;
+          if (b.isDynamic()) {
+            dynamicCount++;
+            if (b.isAwake()) awakeCount++;
+          }
+          for (let f = b.getFixtureList(); f; f = f.getNext()) fixtureCount++;
         }
         const currentContactCount = this.world.getContactCount();
         const contactDelta = currentContactCount - this.lastContactCount;
         this.second.contactsNew = Math.max(0, contactDelta);
         this.second.contactsDestroyed = Math.max(0, -contactDelta);
-        
         const awakeDelta = awakeCount - this.lastAwakeCount;
         this.second.wakeups = Math.max(0, awakeDelta);
         this.second.sleepdowns = Math.max(0, -awakeDelta);
-        
         this.stats.s_damageEvents = this.second.damageEvents;
         this.stats.s_wakeups = this.second.wakeups;
         this.stats.s_sleepdowns = this.second.sleepdowns;
         this.stats.s_contactsNew = this.second.contactsNew;
         this.stats.s_contactsDestroyed = this.second.contactsDestroyed;
-
         this.stats.bodies_total = bodyCount;
         this.stats.bodies_dynamic = dynamicCount;
         this.stats.fixtures_total = fixtureCount;
-        this.stats.joints_total = this.world.getJointCount();
-        this.stats.bullets_count = bulletCount;
-        
-        // Reset per-second counters
-        this.second.damageEvents = 0;
-        this.lastSecondTime = now;
-        this.lastAwakeCount = awakeCount;
-        this.lastContactCount = currentContactCount;
-    }
-      
-    // --- Update stats for rendering (less frequently) ---
-    if (now >= this.lastUpdateTime + this.updateInterval) {
-        // STEP
+        this.second.damageEvents = 0; this.lastSecondTime = now;
+        this.lastAwakeCount = awakeCount; this.lastContactCount = currentContactCount;
+      }
+      if (now >= this.lastUpdateTime + this.updateInterval) {
+        this.hz = APP.physicsManager.settings.hz;
         this.stats.step_time_ms = this.frame.stepTime.toFixed(2);
         this.stats.step_substeps = this.frame.substeps;
         this.stats.step_accumulator = accumulator.toFixed(4);
-        
         const budget = 1000 / this.hz;
         this.stats.step_budget_hit = this.frame.stepTime > budget ? 'YES' : 'NO';
         this.stats.step_hz_target = this.hz;
         this.stats.step_dt = (1/this.hz).toPrecision(4);
-        
-        // BODIES
-        const awakeCount = this.lastAwakeCount;
         const dynamicCount = this.stats.bodies_dynamic || 0;
-        this.stats.bodies_awake = awakeCount;
-        this.stats.bodies_sleeping = dynamicCount - awakeCount;
-        this.stats.bodies_sleep_ratio = dynamicCount > 0 ? ((dynamicCount - awakeCount) / dynamicCount).toFixed(2) : '0.00';
-        this.stats.awake_ratio = dynamicCount > 0 ? (awakeCount / dynamicCount).toFixed(2) : '0.00';
-
-        // COLLISION
+        this.stats.bodies_awake = this.lastAwakeCount;
+        this.stats.bodies_sleeping = dynamicCount - this.lastAwakeCount;
+        this.stats.bodies_sleep_ratio = dynamicCount > 0 ? ((dynamicCount - this.lastAwakeCount) / dynamicCount).toFixed(2) : '0.00';
+        this.stats.awake_ratio = dynamicCount > 0 ? (this.lastAwakeCount / dynamicCount).toFixed(2) : '0.00';
         this.stats.contacts_active = this.world.getContactCount();
-
-        // PERCENTILES & AVERAGES (expensive, run less often)
         if (this.stepTimeBuffer.length > 0) {
-            const sortedTimes = [...this.stepTimeBuffer].sort((a,b) => a-b);
-            const p95Index = Math.floor(sortedTimes.length * 0.95);
-            this.stats.step_time_p95 = sortedTimes[p95Index].toFixed(2);
+          const sorted = [...this.stepTimeBuffer].sort((a,b) => a-b);
+          this.stats.step_time_p95 = sorted[Math.floor(sorted.length * 0.95)].toFixed(2);
         }
         if (this.impulseBuffer.length > 0) {
-            const sortedImpulses = [...this.impulseBuffer].sort((a,b) => a-b);
-            const p95Index = Math.floor(sortedImpulses.length * 0.95);
-            this.stats.normal_impulse_p95 = sortedImpulses[p95Index].toFixed(2);
-            const impulseSum = this.impulseBuffer.reduce((a,b) => a+b, 0);
-            this.stats.normal_impulse_avg = (impulseSum / this.impulseBuffer.length).toFixed(2);
+          const sorted = [...this.impulseBuffer].sort((a,b) => a-b);
+          this.stats.normal_impulse_p95 = sorted[Math.floor(sorted.length * 0.95)].toFixed(2);
+          const sum = this.impulseBuffer.reduce((a,b) => a+b, 0);
+          this.stats.normal_impulse_avg = (sum / this.impulseBuffer.length).toFixed(2);
         }
+        this.updateDOM(); this.lastUpdateTime = now;
+      }
+    }
+    updateDOM() {
+      // FIX: Correctly reference and update DOM elements
+      for (const key in this.stats) {
+          if (this.dom[key]) {
+              const value = this.stats[key];
+              const el = this.dom[key];
+              if(el.textContent !== String(value)) el.textContent = value;
+          }
+      }
+      this.dom.damage_events.textContent = this.stats.s_damageEvents || 0;
+      this.dom.wakeups_per_s.textContent = this.stats.s_wakeups || 0;
+      this.dom.sleepdowns_per_s.textContent = this.stats.s_sleepdowns || 0;
+      this.dom.contacts_new_per_s.textContent = this.stats.s_contactsNew || 0;
+      this.dom.contacts_destroyed_per_s.textContent = this.stats.s_contactsDestroyed || 0;
+      const budgetHit = this.stats.step_budget_hit === 'YES';
+      this.dom.step_time_ms.style.color = budgetHit ? '#ef4444' : '';
+      this.dom.step_budget_hit.style.color = budgetHit ? '#ef4444' : '';
+    }
+  }
+
+  // ----- Main App Functions -----
+  
+  function init() {
+    APP.world = new pl.World(Vec2(0, -10));
+    APP.physicsManager = new PhysicsManager(APP.world);
+    APP.uiPanelManager = new UIPanelManager(APP.physicsManager);
+    APP.physicsTelemetry = new PhysicsTelemetry(APP.world, DAMAGE_IMPULSE_THRESHOLD);
+    
+    setupUIControls();
+    setupInputHandlers();
+    
+    resize();
+    resetLevel();
+    
+    let last = performance.now(); let frameTimes = [];
+    function loop(now) {
+      const elapsed = now - last; last = now;
+      frameTimes.push(elapsed);
+      if (frameTimes.length > 60) frameTimes.shift();
+      APP.physicsManager.telemetry.fps = 1000 / (frameTimes.reduce((a, b) => a + b, 0) / (frameTimes.length || 1));
       
-        this.updateDOM();
-        this.lastUpdateTime = now;
+      gameStep(elapsed / 1000);
+      draw();
+      requestAnimationFrame(loop);
     }
+    requestAnimationFrame(loop);
   }
 
-  updateDOM() {
-    for (const key in this.stats) {
-        if (this.dom[key]) {
-            const value = this.stats[key];
-            const el = this.dom[key];
-            if(el.textContent !== value) el.textContent = value;
-        }
-    }
-    // Handle per-second stats separately
-    this.dom.damage_events.textContent = this.stats.s_damageEvents || 0;
-    this.dom.wakeups_per_s.textContent = this.stats.s_wakeups || 0;
-    this.dom.sleepdowns_per_s.textContent = this.stats.s_sleepdowns || 0;
-    this.dom.contacts_new_per_s.textContent = this.stats.s_contactsNew || 0;
-    this.dom.contacts_destroyed_per_s.textContent = this.stats.s_contactsDestroyed || 0;
+  let accumulator = 0;
+  function gameStep(elapsed) {
+      const settings = APP.physicsManager.settings;
+      const dt = 1 / settings.hz;
+      accumulator += Math.min(0.25, elapsed);
+      let substeps = 0;
+      const maxSubsteps = 5;
+      
+      APP.physicsTelemetry.beginFrame();
+      while (accumulator >= dt && substeps < maxSubsteps) {
+        if (APP.bird) APP.physicsManager.whitelist.add(APP.bird);
+        
+        APP.physicsTelemetry.beginStep();
+        APP.physicsManager.step(dt);
+        APP.physicsTelemetry.endStep();
 
-    // Color coding for budget hits
-    const budgetHit = this.stats.step_budget_hit === 'YES';
-    this.dom.step_time_ms.style.color = budgetHit ? '#ef4444' : '';
-    this.dom.step_budget_hit.style.color = budgetHit ? '#ef4444' : '';
+        APP.physicsManager.updatePostStep();
+        accumulator -= dt;
+        substeps++;
+      }
+      APP.physicsManager.telemetry.substeps = substeps;
+      updateGameLogic();
+      
+      APP.physicsManager.collectTelemetry();
+      APP.uiPanelManager.updateTelemetry(APP.physicsManager.telemetry);
+      APP.physicsTelemetry.endFrame(accumulator);
   }
-}
 
-
-
-(function() {
-  const pl = planck; // from CDN
-  const Vec2 = pl.Vec2;
-
-  // ----- Physics world -----
-  const GRAVITY = Vec2(0, -10);
-  const HZ = 60;
-  let world = new pl.World(GRAVITY);
-
-  // ----- Game Settings -----
+  let enableDrag = false;
   const DAMAGE_IMPULSE_THRESHOLD = 3.0;
 
-  // ----- Performance Monitoring -----
-  const perfMonitor = new PerfMonitor(world);
-  const physicsTelemetry = new PhysicsTelemetry(world, HZ, DAMAGE_IMPULSE_THRESHOLD);
-
-
-  // ----- Canvas & coordinate helpers -----
-  const canvas = document.getElementById('c');
-  const ctx = canvas.getContext('2d');
-  const dpr = Math.max(1, window.devicePixelRatio || 1);
-  function resize() {
-    canvas.width = Math.floor(window.innerWidth * dpr);
-    canvas.height = Math.floor(window.innerHeight * dpr);
-    canvas.style.width = '100vw';
-    canvas.style.height = '100vh';
-    createBoundaries();
+  function updateGameLogic() {
+    if (APP.bodiesToDestroy.length > 0) {
+        APP.bodiesToDestroy.forEach(body => { 
+            APP.blocks = APP.blocks.filter(b => b !== body); 
+            if (APP.world.isLocked() === false && body.m_world === APP.world) APP.world.destroyBody(body);
+        });
+        APP.bodiesToDestroy = [];
+    }
+    if (APP.bird) {
+        if (enableDrag) applyAirDrag(APP.bird);
+        const isOffScreen = APP.bird.getPosition().y < -5 || APP.bird.getPosition().x > 50;
+        const isStopped = APP.slingshot.launched && !APP.bird.isAwake();
+        if ((isOffScreen || isStopped) && !APP.world.isLocked()) {
+            APP.physicsManager.whitelist.delete(APP.bird);
+            APP.world.destroyBody(APP.bird); 
+            APP.bird = null;
+        }
+    }
   }
-  window.addEventListener('resize', resize);
-  
-  const PPM = 50;
-  function worldToScreen(v) { return { x: v.x * PPM * dpr, y: canvas.height - v.y * PPM * dpr }; }
-  function screenToWorld(px, py) { const rect = canvas.getBoundingClientRect(); const cx = (px - rect.left) * dpr; const cy = (py - rect.top) * dpr; return Vec2(cx / (PPM * dpr), (canvas.height - cy) / (PPM * dpr)); }
-  function vAdd(a,b){ return Vec2(a.x + b.x, a.y + b.y); }
-  function vSub(a,b){ return Vec2(a.x - b.x, a.y - b.y); }
-  function vMul(a, s){ return Vec2(a.x * s, a.y * s); }
-  function vLen(v){ return Math.hypot(v.x, v.y); }
-  function vNorm(v){ const L = vLen(v); return L > 1e-8 ? vMul(v, 1/L) : Vec2(0,0); }
-  function clampVec(v, max){ const L = vLen(v); return L > max ? vMul(v, max / L) : v; }
 
-  // ----- Game Config -----
-  let buildingSettings = {
-    numBuildings: 1,
-    minWidth: 6,
-    maxWidth: 6,
-    minHeight: 10,
-    maxHeight: 10,
-  };
-
-  // ----- Game State -----
-  let level = 1;
-  let blocks = [];
-  let levelIsClearing = false;
-  let boundaryBody = null;
-  let levelClearCountdown = 0;
-  let countdownInterval = null;
-  let destructibleMode = true;
-  let bodiesToDestroy = [];
-  const INITIAL_BLOCK_HEALTH = 100;
+  function resetLevel() {
+    for (let b = APP.world.getBodyList(); b; b = b.getNext()) {
+      if (b.isDynamic()) APP.world.destroyBody(b);
+    }
+    APP.blocks = []; APP.bird = null; APP.bodiesToDestroy = [];
+    APP.physicsManager.whitelist.clear();
+    APP.physicsManager.deactivatedBodies.clear();
+    APP.physicsManager.grid.clear();
+    APP.slingshot.launched = false; APP.slingshot.isAiming = false; APP.slingshot.showDrag = false;
+    createCityscape();
+  }
 
   function createBoundaries() {
-      if (boundaryBody) world.destroyBody(boundaryBody);
-      boundaryBody = world.createBody();
-      boundaryBody.createFixture(pl.Edge(Vec2(-50, 0), Vec2(50, 0)), {friction: 0.9});
-      const rightEdgeX = screenToWorld(window.innerWidth, 0).x;
-      boundaryBody.createFixture(pl.Edge(Vec2(rightEdgeX, -10), Vec2(rightEdgeX, 100)), {});
-  }
-  
-  function makeBox(x, y, w, h, opts) {
-    const b = world.createDynamicBody({ 
-        position: Vec2(x, y),
-        userData: { type: 'block', health: INITIAL_BLOCK_HEALTH } 
-    });
-    b.createFixture(pl.Box(w/2, h/2), Object.assign({ density: 0.2, friction: 0.6, restitution: 0.05 }, opts||{}));
-    blocks.push(b);
-    return b;
+    if (APP.boundaryBody) APP.world.destroyBody(APP.boundaryBody);
+    APP.boundaryBody = APP.world.createBody();
+    APP.boundaryBody.createFixture(pl.Edge(Vec2(-50, 0), Vec2(50, 0)), {friction: 0.9});
+    const rightEdgeX = screenToWorld(window.innerWidth, 0).x;
+    APP.boundaryBody.createFixture(pl.Edge(Vec2(rightEdgeX, -10), Vec2(rightEdgeX, 100)), {});
   }
   
   function createCityscape() {
-    const startScreenX = window.innerWidth / 2;
-    const startWorldX = screenToWorld(startScreenX, 0).x;
-    const endWorldX = screenToWorld(window.innerWidth, 0).x - 1.0;
-    const availableWidth = endWorldX - startWorldX;
-
-    const blockWorldW = 0.4;
-    const blockWorldH = 0.4;
-    const buildingColors = ['#dc2626', '#71717a', '#06b6d4'];
-    let currentWorldX = startWorldX;
-    
-    const numBuildings = buildingSettings.numBuildings;
-    for (let i = 0; i < numBuildings; i++) {
-        const widthRange = buildingSettings.maxWidth - buildingSettings.minWidth;
-        const heightRange = buildingSettings.maxHeight - buildingSettings.minHeight;
-        const buildingWidthInBlocks = buildingSettings.minWidth + Math.floor(Math.random() * (widthRange + 1));
-        const buildingHeightInBlocks = buildingSettings.minHeight + Math.floor(Math.random() * (heightRange + 1));
-        const buildingWorldW = buildingWidthInBlocks * blockWorldW;
-
-        if (currentWorldX + buildingWorldW > endWorldX) break;
-
-        const wallColor = buildingColors[Math.floor(Math.random() * buildingColors.length)];
-
-        for (let r = 0; r < buildingHeightInBlocks; r++) {
-            for (let c = 0; c < buildingWidthInBlocks; c++) {
-                const isWindow = (r > 0 && c > 0 && c < buildingWidthInBlocks - 1 && r % 2 !== 0 && c % 2 !== 0) && (Math.random() < 0.8);
-                const x = currentWorldX + (c * blockWorldW) + blockWorldW / 2;
-                const y = (r * blockWorldH) + blockWorldH / 2;
-                const userData = {
-                    type: 'block',
-                    health: isWindow ? INITIAL_BLOCK_HEALTH * 0.7 : INITIAL_BLOCK_HEALTH,
-                    isWindow: isWindow,
-                    baseColor: isWindow ? '#facc15' : wallColor
-                };
-                const opts = { density: isWindow ? 0.15 : 0.2, userData: userData };
-                makeBox(x, y, blockWorldW, blockWorldH, opts);
-            }
+    const startX = screenToWorld(window.innerWidth / 2, 0).x;
+    const endX = screenToWorld(window.innerWidth, 0).x - 1.0;
+    const blockW = 0.4, blockH = 0.4;
+    let currentX = startX;
+    for (let i = 0; i < APP.buildingSettings.numBuildings; i++) {
+      const w = APP.buildingSettings.minWidth + Math.floor(Math.random() * (APP.buildingSettings.maxWidth - APP.buildingSettings.minWidth + 1));
+      const h = APP.buildingSettings.minHeight + Math.floor(Math.random() * (APP.buildingSettings.maxHeight - APP.buildingSettings.minHeight + 1));
+      const buildingWorldW = w * blockW;
+      if (currentX + buildingWorldW > endX) break;
+      for (let r = 0; r < h; r++) {
+        for (let c = 0; c < w; c++) {
+          makeBox(currentX + c*blockW + blockW/2, r*blockH + blockH/2, blockW, blockH);
         }
-        currentWorldX += buildingWorldW + blockWorldW * (Math.random() * 2 + 1.5);
+      }
+      currentX += buildingWorldW + blockW * (Math.random() * 2 + 1.5);
     }
   }
 
-  // ----- Slingshot config -----
-  const slingBase = Vec2(3.0, 2.0), maxPull = 1.25, kSpeed = 18.0, gamma = 1.10, minSpeed = 1.5, mouthOffset = 0.16;
-  let isAiming = false, pointerWorld = slingBase.clone(), launched = false, bird = null, showDrag = false, enableDrag = false;
-
-  function spawnBird(pos, v0) {
-    if (bird) world.destroyBody(bird);
-    bird = world.createDynamicBody({ position: pos, bullet: true, linearDamping: 0.0, angularDamping: 0.05, userData: { type: 'bird' } });
-    bird.createFixture(pl.Circle(0.18), { density: 2.5, friction: 0.6, restitution: 0.2 });
-    bird.setLinearVelocity(v0);
-    bird.setSleepingAllowed(true);
-    launched = true;
+  function makeBox(x, y, w, h) {
+    const b = APP.world.createDynamicBody({ position: Vec2(x, y), userData: { type: 'block', health: 100 } });
+    b.createFixture(pl.Box(w/2, h/2), { density: 0.2, friction: 0.6, restitution: 0.05 });
+    APP.blocks.push(b);
   }
-
-  function applyAirDrag(body) { if (!body) return; const v = body.getLinearVelocity(), speed = vLen(v); if (speed < 0.01) return; const rho = 1.2, Cd = 0.47, r = 0.18, A = Math.PI * r * r, mag = 0.5 * rho * Cd * A * speed * speed, Fd = vMul(v, -mag / (speed||1)); body.applyForceToCenter(Fd, true); }
-  function sampleTrajectory(p0, v0, samples = 30, dt = 0.05) { const pts = []; for (let i = 1; i <= samples; i++) { const t = i * dt, x = p0.x + v0.x * t, y = p0.y + v0.y * t + 0.5 * GRAVITY.y * t * t; if (y < 0) break; pts.push(Vec2(x, y)); } return pts; }
-
-  // Input handling
-  function beginAim(evt) { if (bird) { world.destroyBody(bird); bird = null; } launched = false; isAiming = true; showDrag = true; pointerWorld = getWorldFromEvent(evt); evt.preventDefault(); }
-  function moveAim(evt) { if (!isAiming) return; pointerWorld = getWorldFromEvent(evt); evt.preventDefault(); }
-  function endAim(evt) { if (!isAiming) return; isAiming = false; showDrag = false; const pull = clampVec(vSub(pointerWorld, slingBase), maxPull), pullLen = vLen(pull); if (pullLen < 0.1) return; const launchDir = vMul(pull, -1), dir = vNorm(launchDir); let speed = kSpeed * Math.pow(pullLen, gamma); speed = Math.max(speed, minSpeed); const v0 = vMul(dir, speed), mouth = vAdd(slingBase, vMul(dir, mouthOffset)); spawnBird(mouth, v0); evt.preventDefault(); }
+  
+  function spawnBird(pos, v0) {
+    if (APP.bird) APP.world.destroyBody(APP.bird);
+    APP.bird = APP.world.createDynamicBody({ position: pos, bullet: APP.physicsManager.settings.enableCCDForBullets, userData: { type: 'bird' } });
+    APP.bird.createFixture(pl.Circle(0.18), { density: 2.5, friction: 0.6, restitution: 0.2 });
+    APP.bird.setLinearVelocity(v0);
+    APP.slingshot.launched = true;
+  }
+  
+  function applyAirDrag(body) { if (!body) return; const v = body.getLinearVelocity(), speed = v.length(); if (speed < 0.01) return; const dragMag = 0.5 * 1.2 * 0.47 * (Math.PI * 0.18 * 0.18) * speed * speed; const Fd = Vec2.mul(v, -dragMag / (speed||1)); body.applyForceToCenter(Fd, true); }
+  
+  function beginAim(evt) { if (APP.bird) { APP.world.destroyBody(APP.bird); APP.bird = null; } APP.slingshot.launched = false; APP.slingshot.isAiming = true; APP.slingshot.showDrag = true; APP.slingshot.pointerWorld = getWorldFromEvent(evt); evt.preventDefault(); }
+  function moveAim(evt) { if (!APP.slingshot.isAiming) return; APP.slingshot.pointerWorld = getWorldFromEvent(evt); evt.preventDefault(); }
+  function endAim(evt) {
+    if (!APP.slingshot.isAiming) return;
+    APP.slingshot.isAiming = false; APP.slingshot.showDrag = false;
+    const { base } = APP.slingshot;
+    const maxPull = 1.25, kSpeed = 18.0, gamma = 1.10, minSpeed = 1.5, mouthOffset = 0.16;
+    let pull = Vec2.sub(APP.slingshot.pointerWorld, base);
+    if (pull.length() > maxPull) { pull.normalize(); pull = Vec2.mul(pull, maxPull); }
+    if (pull.length() < 0.1) return;
+    const launchDir = Vec2.mul(pull, -1);
+    const dir = Vec2.clone(launchDir); dir.normalize();
+    let speed = Math.max(minSpeed, kSpeed * Math.pow(pull.length(), gamma));
+    const v0 = Vec2.mul(dir, speed), mouth = Vec2.add(base, Vec2.mul(dir, mouthOffset));
+    spawnBird(mouth, v0);
+    evt.preventDefault();
+  }
   function getWorldFromEvent(evt) { const t = (evt.touches && evt.touches.length) ? evt.touches[0] : evt; return screenToWorld(t.clientX, t.clientY); }
 
-  canvas.addEventListener('mousedown', beginAim); canvas.addEventListener('mousemove', moveAim); window.addEventListener('mouseup', endAim);
-  canvas.addEventListener('touchstart', beginAim, {passive:false}); canvas.addEventListener('touchmove', moveAim, {passive:false}); canvas.addEventListener('touchend', endAim, {passive:false});
-  
-  window.addEventListener('keydown', (e)=>{ 
-    if (e.key === 'r' || e.key === 'R') resetLevel(); 
-    else if (e.key === 'd' || e.key === 'D') enableDrag = !enableDrag; 
-    else if (e.key.toLowerCase() === 'h' && document.activeElement.type !== 'range') {
-        toggleHelp();
-    }
-  });
-
-  function cleanupLevel() {
-      for (let b = world.getBodyList(); b; b = b.getNext()) { if (b.isDynamic()) world.destroyBody(b); }
-      blocks = []; bird = null; bodiesToDestroy = [];
-      if (countdownInterval) { clearInterval(countdownInterval); countdownInterval = null; }
-  }
-  
-  function startNewLevel() { level++; cleanupLevel(); createCityscape(); launched = false; }
-  function resetLevel() { level = 1; cleanupLevel(); createCityscape(); launched = false; isAiming = false; showDrag = false; levelIsClearing = false; levelClearCountdown = 0; }
-  
-  // ----- Level Clear Logic -----
-  const FLAT_ANGLE_TOLERANCE = 0.1;
-  const STOPPED_LINEAR_VELOCITY = 0.05;
-  const STOPPED_ANGULAR_VELOCITY = 0.05;
-  function isAngleFlat(angle) { const normalizedAngle = Math.abs(angle % (Math.PI / 2)); return Math.min(normalizedAngle, Math.PI / 2 - normalizedAngle) < FLAT_ANGLE_TOLERANCE; }
-  function checkWinCondition() {
-    if (blocks.length === 0) return true;
-    for (const block of blocks) { if (block.getLinearVelocity().length() > STOPPED_LINEAR_VELOCITY || Math.abs(block.getAngularVelocity()) > STOPPED_ANGULAR_VELOCITY) return false; }
-    for (const block of blocks) {
-      if (!isAngleFlat(block.getAngle())) return false;
-      let isTouchingGround = false;
-      for (let ce = block.getContactList(); ce; ce = ce.next) { if (ce.contact.isTouching()) { const otherBody = (ce.contact.getFixtureA().getBody() === block) ? ce.contact.getFixtureB().getBody() : ce.contact.getFixtureA().getBody(); if (otherBody === boundaryBody) { isTouchingGround = true; break; } } }
-      if (!isTouchingGround) return false;
-    }
-    return true;
-  }
-
-  world.on('post-solve', function(contact, impulse) {
-    physicsTelemetry.postSolve(impulse); // TELEMETRY HOOK
-    if (!destructibleMode) return;
-    const fA = contact.getFixtureA(), fB = contact.getFixtureB(), bA = fA.getBody(), bB = fB.getBody();
-    const dataA = bA.getUserData(), dataB = bB.getUserData(); let blockBody = null;
-    if (dataA && dataA.type === 'bird' && dataB && dataB.type === 'block') blockBody = bB;
-    else if (dataB && dataB.type === 'bird' && dataA && dataA.type === 'block') blockBody = bA;
-    if (blockBody) {
-      const totalImpulse = impulse.normalImpulses[0];
-      if (totalImpulse > DAMAGE_IMPULSE_THRESHOLD) {
-        const blockData = blockBody.getUserData();
-        blockData.health -= (totalImpulse * 25);
-        if (blockData.health <= 0 && !bodiesToDestroy.includes(blockBody)) bodiesToDestroy.push(blockBody);
+  function setupInputHandlers() {
+    const canvas = APP.canvas;
+    canvas.addEventListener('mousedown', beginAim); canvas.addEventListener('mousemove', moveAim); window.addEventListener('mouseup', endAim);
+    canvas.addEventListener('touchstart', beginAim, {passive:false}); canvas.addEventListener('touchmove', moveAim, {passive:false}); canvas.addEventListener('touchend', endAim, {passive:false});
+    window.addEventListener('keydown', (e) => {
+      if (e.key.toLowerCase() === 'r') resetLevel();
+      if (e.key.toLowerCase() === 'd') enableDrag = !enableDrag;
+      if (e.key.toLowerCase() === 'h' && document.activeElement.type !== 'range') {
+        APP.destructibleMode = !APP.destructibleMode;
+      };
+    });
+    APP.world.on('post-solve', function(contact, impulse) {
+      APP.physicsTelemetry.postSolve(impulse);
+      if (!APP.destructibleMode) return;
+      const bA = contact.getFixtureA().getBody(), bB = contact.getFixtureB().getBody();
+      const dataA = bA.getUserData(), dataB = bB.getUserData(); let blockBody = null;
+      if (dataA && dataA.type === 'bird' && dataB && dataB.type === 'block') blockBody = bB;
+      else if (dataB && dataB.type === 'bird' && dataA && dataA.type === 'block') blockBody = bA;
+      if (blockBody) {
+        if (impulse.normalImpulses[0] > DAMAGE_IMPULSE_THRESHOLD) {
+          const blockData = blockBody.getUserData();
+          blockData.health -= (impulse.normalImpulses[0] * 25);
+          if (blockData.health <= 0 && !APP.bodiesToDestroy.includes(blockBody)) APP.bodiesToDestroy.push(blockBody);
+        }
       }
-    }
-  });
-  
-  // ----- Help Menu & Controls Setup -----
-  function setupUI() {
-    const helpButton = document.getElementById('help-button');
-    const helpModal = document.getElementById('help-modal');
-    const helpBackdrop = document.getElementById('help-backdrop');
-    const closeBtn = helpModal.querySelector('.close-btn');
+    });
+  }
 
-    window.toggleHelp = () => helpModal.classList.toggle('visible');
-
-    helpButton.addEventListener('click', toggleHelp);
-    helpBackdrop.addEventListener('click', toggleHelp);
-    closeBtn.addEventListener('click', toggleHelp);
-
-    const sliders = { numBuildings: document.getElementById('num-buildings-slider'), minWidth: document.getElementById('min-width-slider'), maxWidth: document.getElementById('max-width-slider'), minHeight: document.getElementById('min-height-slider'), maxHeight: document.getElementById('max-height-slider'), };
-    const values = { numBuildings: document.getElementById('num-buildings-value'), minWidth: document.getElementById('min-width-value'), maxWidth: document.getElementById('max-width-value'), minHeight: document.getElementById('min-height-value'), maxHeight: document.getElementById('max-height-value'), };
-    
+  function setupUIControls() {
+    const sliders = { numBuildings: 'num-buildings', minWidth: 'min-width', maxWidth: 'max-width', minHeight: 'min-height', maxHeight: 'max-height' };
     for (const key in sliders) {
-      sliders[key].addEventListener('input', (e) => {
-        const value = parseInt(e.target.value); buildingSettings[key] = value; values[key].textContent = value;
-        if (key === 'minWidth' && value > buildingSettings.maxWidth) { sliders.maxWidth.value = value; buildingSettings.maxWidth = value; values.maxWidth.textContent = value; }
-        if (key === 'maxWidth' && value < buildingSettings.minWidth) { sliders.minWidth.value = value; buildingSettings.minWidth = value; values.minWidth.textContent = value; }
-        if (key === 'minHeight' && value > buildingSettings.maxHeight) { sliders.maxHeight.value = value; buildingSettings.maxHeight = value; values.maxHeight.textContent = value; }
-        if (key === 'maxHeight' && value < buildingSettings.minHeight) { sliders.minHeight.value = value; buildingSettings.minHeight = value; values.minHeight.textContent = value; }
+      const slider = document.getElementById(`${sliders[key]}-slider`);
+      const valueSpan = document.getElementById(`${sliders[key]}-value`);
+      slider.value = APP.buildingSettings[key]; valueSpan.textContent = APP.buildingSettings[key];
+      slider.addEventListener('input', (e) => {
+        APP.buildingSettings[key] = parseInt(e.target.value); 
+        valueSpan.textContent = e.target.value;
       });
     }
+    const helpModal = document.getElementById('help-modal');
+    document.getElementById('help-button').addEventListener('click', () => helpModal.classList.toggle('visible'));
+    document.getElementById('help-backdrop').addEventListener('click', () => helpModal.classList.toggle('visible'));
+    helpModal.querySelector('.close-btn').addEventListener('click', () => helpModal.classList.toggle('visible'));
   }
 
-  // ----- Initial Setup -----
-  resize(); 
-  setupUI();
-  createCityscape();
+  function resize() { APP.canvas.width = Math.floor(window.innerWidth * APP.dpr); APP.canvas.height = Math.floor(window.innerHeight * APP.dpr); createBoundaries(); }
+  window.addEventListener('resize', resize);
+  function worldToScreen(v) { return { x: v.x * APP.PPM * APP.dpr, y: APP.canvas.height - v.y * APP.PPM * APP.dpr }; }
+  function screenToWorld(px, py) { const r = APP.canvas.getBoundingClientRect(); return Vec2((px - r.left) * APP.dpr / (APP.PPM * APP.dpr), (APP.canvas.height - ((py - r.top) * APP.dpr)) / (APP.PPM * APP.dpr)); }
 
-  // ----- Simulation loop -----
-  const dt = 1 / HZ; let acc = 0; let last = performance.now();
-  function loop(now) {
-    physicsTelemetry.beginFrame(); // TELEMETRY HOOK
-    
-    const elapsed = Math.min(0.25, (now - last) / 1000); last = now; acc += elapsed;
-    while (acc >= dt) {
-      if (enableDrag && bird) applyAirDrag(bird);
-      
-      physicsTelemetry.beginStep(); // TELEMETRY HOOK
-      world.step(dt, 8, 3);
-      physicsTelemetry.endStep(); // TELEMETRY HOOK
-      
-      acc -= dt;
-    }
-    
-    if (bodiesToDestroy.length > 0) {
-        bodiesToDestroy.forEach(body => { 
-            blocks = blocks.filter(b => b !== body); 
-            if (world.isLocked() === false && body.m_world === world) world.destroyBody(body);
-        });
-        bodiesToDestroy = [];
-    }
-    if (bird) {
-        const isOffScreen = bird.getPosition().y < -5 || bird.getPosition().x > 50;
-        const isStopped = launched && !bird.isAwake();
-        if ((isOffScreen || isStopped) && !world.isLocked()) { world.destroyBody(bird); bird = null; }
-    }
-    
-    if (!bird && launched && !levelIsClearing) { 
-        if (checkWinCondition()) {
-            levelIsClearing = true; levelClearCountdown = 3;
-            countdownInterval = setInterval(() => { levelClearCountdown--; if (levelClearCountdown <= 0) clearInterval(countdownInterval); }, 1000);
-            setTimeout(() => { startNewLevel(); levelIsClearing = false; levelClearCountdown = 0; if (countdownInterval) clearInterval(countdownInterval); }, 3000); 
-        }
-    }
-    draw();
-    perfMonitor.end();
-    physicsTelemetry.endFrame(acc); // TELEMETRY HOOK
-    requestAnimationFrame(loop);
-  }
-  requestAnimationFrame(loop);
-
-  // ----- Rendering -----
   function draw() {
+    const { ctx, canvas, world } = APP;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     const grd = ctx.createLinearGradient(0, 0, 0, canvas.height);
     grd.addColorStop(0, '#0ea5e9'); grd.addColorStop(1, '#0f172a');
     ctx.fillStyle = grd; ctx.fillRect(0, 0, canvas.width, canvas.height);
-    const slingPix = worldToScreen(slingBase);
-    ctx.fillStyle = '#7c3e1d';
-    ctx.beginPath(); ctx.arc(slingPix.x, slingPix.y, 10*dpr, 0, Math.PI*2); ctx.fill();
-    if (!launched) {
-      const clamped = clampVec(vSub(pointerWorld, slingBase), maxPull), pullEnd = vAdd(slingBase, clamped), pullLen = vLen(clamped), launchDir = vMul(clamped, -1), dir = vNorm(launchDir), mouth = vAdd(slingBase, vMul(dir, mouthOffset));
-      if (showDrag) { const pA = worldToScreen(slingBase), pB = worldToScreen(pullEnd); ctx.strokeStyle = '#f59e0b'; ctx.lineWidth = 4 * dpr; ctx.beginPath(); ctx.moveTo(pA.x, pA.y); ctx.lineTo(pB.x, pB.y); ctx.stroke(); }
-      const mouthPix = worldToScreen(mouth); ctx.fillStyle = '#ef4444'; ctx.beginPath(); ctx.arc(mouthPix.x, mouthPix.y, 9*dpr, 0, Math.PI*2); ctx.fill();
-      if (pullLen > 0.1) {
-          let speed = kSpeed * Math.pow(pullLen, gamma); speed = Math.max(speed, minSpeed); const v0 = vMul(dir, speed), pts = sampleTrajectory(mouth, v0, 36, 0.05);
-          ctx.fillStyle = '#e5e7eb'; pts.forEach(p => { const s = worldToScreen(p); ctx.beginPath(); ctx.arc(s.x, s.y, 3 * dpr, 0, Math.PI * 2); ctx.fill(); });
+    
+    for (let b = world.getBodyList(); b; b = b.getNext()) {
+      if (!b.isActive() || b === APP.boundaryBody) continue;
+      for (let f = b.getFixtureList(); f; f = f.getNext()) {
+        if (f.getShape().getType() === 'circle') drawCircle(b, f.getShape());
+        else if (f.getShape().getType() === 'polygon') drawPolygon(b, f.getShape());
       }
     }
-    for (let b = world.getBodyList(); b; b = b.getNext()) {
-        if (!b.isActive() || b === boundaryBody) continue;
-        for (let f = b.getFixtureList(); f; f = f.getNext()) {
-            const type = f.getShape().getType();
-            if (type === 'circle') drawCircle(b, f.getShape());
-            else if (type === 'polygon') drawPolygon(b, f.getShape());
-        }
-    }
-    const defaultFontSize = 14;
-    ctx.fillStyle = '#e2e8f0'; ctx.font = `${defaultFontSize*dpr}px system-ui, -apple-system, Segoe UI, Roboto`;
-    ctx.fillText(`Air drag: ${enableDrag ? 'ON' : 'OFF'}`, 16*dpr, canvas.height - 36*dpr);
-    ctx.fillText(`Mode: ${destructibleMode ? 'Destructible' : 'Classic'}`, 16*dpr, canvas.height - 16*dpr);
-    ctx.textAlign = 'right';
-    if (levelIsClearing && levelClearCountdown > 0) {
-        ctx.fillStyle = '#f59e0b'; ctx.font = `bold ${16*dpr}px system-ui, -apple-system, Segoe UI, Roboto`;
-        ctx.fillText(`Next level in ${levelClearCountdown}...`, canvas.width - 16*dpr, canvas.height - 16*dpr);
-    } else {
-        ctx.font = `${defaultFontSize*dpr}px system-ui, -apple-system, Segoe UI, Roboto`; ctx.fillStyle = '#e2e8f0';
-        ctx.fillText(`Level: ${level}`, canvas.width - 16*dpr, canvas.height - 16*dpr);
-    }
-    ctx.textAlign = 'left';
+    if (!APP.slingshot.launched) drawSlingshot();
   }
-  function drawCircle(body, circle) { const pos = body.getPosition(), r = circle.m_radius * PPM * dpr; const s = worldToScreen(pos); ctx.save(); ctx.translate(s.x, s.y); ctx.rotate(-body.getAngle()); ctx.fillStyle = (body === bird) ? '#ef4444' : '#94a3b8'; ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI*2); ctx.fill(); ctx.restore(); }
+  
+  function drawSlingshot() {
+    const { ctx, dpr } = APP;
+    const { base, pointerWorld, showDrag } = APP.slingshot;
+    const maxPull = 1.25, kSpeed = 18.0, gamma = 1.10, minSpeed = 1.5, mouthOffset = 0.16;
+    let pull = Vec2.sub(pointerWorld, base);
+    if (pull.length() > maxPull) { pull.normalize(); pull = Vec2.mul(pull, maxPull); }
+    const pullLen = pull.length();
+    if (showDrag) { const pA = worldToScreen(base), pB = worldToScreen(Vec2.add(base, pull)); ctx.strokeStyle = '#f59e0b'; ctx.lineWidth = 4*dpr; ctx.beginPath(); ctx.moveTo(pA.x, pA.y); ctx.lineTo(pB.x, pB.y); ctx.stroke(); }
+    const launchDir = Vec2.mul(pull, -1);
+    const dir = Vec2.clone(launchDir);
+    if (dir.length() > 0) dir.normalize();
+    const mouth = Vec2.add(base, Vec2.mul(dir, mouthOffset));
+    const mouthPix = worldToScreen(mouth); ctx.fillStyle = '#ef4444'; ctx.beginPath(); ctx.arc(mouthPix.x, mouthPix.y, 9*dpr, 0, Math.PI*2); ctx.fill();
+    if (pullLen > 0.1) {
+      let speed = Math.max(minSpeed, kSpeed * Math.pow(pullLen, gamma));
+      const v0 = Vec2.mul(dir, speed), pts = sampleTrajectory(mouth, v0, 36, 0.05);
+      ctx.fillStyle = '#e5e7eb'; pts.forEach(p => { const s = worldToScreen(p); ctx.beginPath(); ctx.arc(s.x, s.y, 3*dpr, 0, Math.PI * 2); ctx.fill(); });
+    }
+  }
+
+  function sampleTrajectory(p0, v0, s, dt) { const pts = []; for (let i=1; i<=s; i++) { const t=i*dt, x=p0.x+v0.x*t, y=p0.y+v0.y*t + 0.5*-10*t*t; if(y<0)break; pts.push(Vec2(x, y)); } return pts; }
+  function drawCircle(body, circle) { const p=body.getPosition(), r=circle.m_radius*APP.PPM*APP.dpr; const s=worldToScreen(p); APP.ctx.save(); APP.ctx.translate(s.x, s.y); APP.ctx.rotate(-body.getAngle()); APP.ctx.fillStyle='#ef4444'; APP.ctx.beginPath(); APP.ctx.arc(0,0,r,0,Math.PI*2); APP.ctx.fill(); APP.ctx.restore(); }
   function drawPolygon(body, poly) { 
-    const xf = body.getTransform(), vcount = poly.m_vertices.length; ctx.beginPath(); 
-    for (let i=0;i<vcount;i++) { const v = pl.Transform.mul(xf, poly.m_vertices[i]); const s = worldToScreen(v); if (i===0) ctx.moveTo(s.x, s.y); else ctx.lineTo(s.x, s.y); } ctx.closePath(); 
-    let color = '#94a3b8';
-    const userData = body.getUserData();
-    if (userData && userData.type === 'block' && destructibleMode) {
-        const baseColorHex = userData.baseColor || '#94a3b8'; 
-        const damagedColor = { r: 82, g: 82, b: 91 }; 
-        const baseR = parseInt(baseColorHex.slice(1, 3), 16);
-        const baseG = parseInt(baseColorHex.slice(3, 5), 16);
-        const baseB = parseInt(baseColorHex.slice(5, 7), 16);
-        const maxHealth = userData.isWindow ? INITIAL_BLOCK_HEALTH * 0.7 : INITIAL_BLOCK_HEALTH;
-        const hRatio = Math.max(0, userData.health / maxHealth);
-        const r = Math.floor(baseR * hRatio + damagedColor.r * (1 - hRatio));
-        const g = Math.floor(baseG * hRatio + damagedColor.g * (1 - hRatio));
-        const b = Math.floor(baseB * hRatio + damagedColor.b * (1 - hRatio));
-        color = `rgb(${r}, ${g}, ${b})`;
-    } else if (userData && userData.baseColor) {
-        color = userData.baseColor;
+    const xf = body.getTransform(); APP.ctx.beginPath(); 
+    for (let i=0;i<poly.m_vertices.length;i++) { const v=pl.Transform.mul(xf, poly.m_vertices[i]); const s=worldToScreen(v); if (i===0) APP.ctx.moveTo(s.x, s.y); else APP.ctx.lineTo(s.x, s.y); } APP.ctx.closePath(); 
+    const data = body.getUserData(); let color = '#71717a';
+    if(data && data.type === 'block' && APP.destructibleMode){
+      const hRatio = Math.max(0, data.health / 100);
+      const r=Math.floor(82*(1-hRatio)+113*hRatio), g=Math.floor(82*(1-hRatio)+113*hRatio), b=Math.floor(91*(1-hRatio)+122*hRatio);
+      color = `rgb(${r},${g},${b})`;
     }
-    ctx.fillStyle = color; ctx.fill(); ctx.lineWidth = 1*dpr; ctx.strokeStyle = 'rgba(0,0,0,0.25)'; ctx.stroke(); 
+    APP.ctx.fillStyle = color; APP.ctx.fill(); APP.ctx.lineWidth = 1*APP.dpr; APP.ctx.strokeStyle = 'rgba(0,0,0,0.25)'; APP.ctx.stroke(); 
   }
+
+  // ----- Start -----
+  init();
 })();
