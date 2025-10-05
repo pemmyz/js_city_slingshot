@@ -64,7 +64,7 @@
     </div>
   </div>
 
-  <!-- NEW Performance & Controls Panel -->
+  <!-- Performance & Controls Panel -->
   <div id="perf-panel">
     <div id="perf-handle">
       <span>&#9881;</span>
@@ -76,7 +76,6 @@
         <button id="panel-close-btn">&times;</button>
       </div>
       
-      <!-- Profiles -->
       <div class="perf-group">
         <h4>Profile</h4>
         <div class="profile-selector">
@@ -86,7 +85,6 @@
         </div>
       </div>
       
-      <!-- General Settings -->
       <div class="perf-group">
         <h4 class="collapsible active">General</h4>
         <div class="collapsible-content">
@@ -97,7 +95,6 @@
         </div>
       </div>
 
-      <!-- Neighbor Filter -->
       <div class="perf-group">
         <h4 class="collapsible">Neighbor Filter</h4>
         <div class="collapsible-content">
@@ -107,7 +104,6 @@
         </div>
       </div>
 
-      <!-- Aggressive LOD -->
       <div class="perf-group">
         <h4 class="collapsible">Aggressive LOD</h4>
         <div class="collapsible-content">
@@ -117,7 +113,6 @@
         </div>
       </div>
       
-      <!-- Sleep -->
       <div class="perf-group">
         <h4 class="collapsible">Sleep Tuning</h4>
         <div class="collapsible-content">
@@ -128,7 +123,6 @@
         </div>
       </div>
       
-      <!-- Telemetry -->
       <div class="perf-group telemetry">
         <h4 class="collapsible active">Live Telemetry</h4>
         <div class="collapsible-content">
@@ -146,7 +140,7 @@
     </div>
   </div>
 
-  <!-- RESTORED Old Telemetry Panel -->
+  <!-- Detailed Telemetry Panel -->
   <div id="telemetry-panel">
     <div id="telemetry-handle">
       <span>&#128202;</span>
@@ -164,6 +158,9 @@
           <span class="label">step.substeps</span><span class="value" data-stat-detailed="step_substeps">--</span>
           <span class="label">step.accumulator</span><span class="value" data-stat-detailed="step_accumulator">--</span>
           <span class="label">step.time_budget_hit</span><span class="value" data-stat-detailed="step_budget_hit">--</span>
+          <span class="label">...velocity (ms)</span><span class="value na">N/A</span>
+          <span class="label">...position (ms)</span><span class="value na">N/A</span>
+          <span class="label">...toi (ms)</span><span class="value na">N/A</span>
         </div>
       </div>
       <div class="telemetry-group">
@@ -175,6 +172,8 @@
           <span class="label">bodies.sleeping</span><span class="value" data-stat-detailed="bodies_sleeping">--</span>
           <span class="label">sleep_ratio</span><span class="value" data-stat-detailed="bodies_sleep_ratio">--</span>
           <span class="label">fixtures.total</span><span class="value" data-stat-detailed="fixtures_total">--</span>
+          <span class="label">bullets.count</span><span class="value" data-stat-detailed="bullets_count">--</span>
+          <span class="label">joints.total</span><span class="value" data-stat-detailed="joints_total">--</span>
         </div>
       </div>
       <div class="telemetry-group">
@@ -183,6 +182,9 @@
           <span class="label">contacts.active</span><span class="value" data-stat-detailed="contacts_active">--</span>
           <span class="label">contacts.new/s</span><span class="value" data-stat-detailed="contacts_new_per_s">--</span>
           <span class="label">contacts.destroyed/s</span><span class="value" data-stat-detailed="contacts_destroyed_per_s">--</span>
+          <span class="label">broadphase.proxies</span><span class="value na">N/A</span>
+          <span class="label">broadphase.pairs</span><span class="value na">N/A</span>
+          <span class="label">toi.events</span><span class="value na">N/A</span>
         </div>
       </div>
       <div class="telemetry-group">

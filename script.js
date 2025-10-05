@@ -326,9 +326,10 @@
       if (this.stepTimeBuffer.length > this.bufferSize) this.stepTimeBuffer.shift();
       const now = performance.now();
       if (now >= this.lastSecondTime + 1000) {
-        let bodyCount = 0, dynamicCount = 0, awakeCount = 0, fixtureCount = 0;
+        let bodyCount = 0, dynamicCount = 0, awakeCount = 0, fixtureCount = 0, bulletCount = 0;
         for (let b = this.world.getBodyList(); b; b = b.getNext()) {
           bodyCount++;
+          if(b.isBullet()) bulletCount++;
           if (b.isDynamic()) {
             dynamicCount++;
             if (b.isAwake()) awakeCount++;
@@ -350,6 +351,8 @@
         this.stats.bodies_total = bodyCount;
         this.stats.bodies_dynamic = dynamicCount;
         this.stats.fixtures_total = fixtureCount;
+        this.stats.bullets_count = bulletCount;
+        this.stats.joints_total = this.world.getJointCount();
         this.second.damageEvents = 0; this.lastSecondTime = now;
         this.lastAwakeCount = awakeCount; this.lastContactCount = currentContactCount;
       }
@@ -639,7 +642,7 @@
       const mouthOffset = 0.16;
       const radius = 9 * dpr;
 
-      // --- 1. ALWAYS draw the static marker at the home position ---
+      // Always draw the static marker at the home position
       const markerDir = Vec2(1, 0); 
       const markerMouth = Vec2.add(base, Vec2.mul(markerDir, mouthOffset));
       const mouthPix = worldToScreen(markerMouth);
@@ -659,7 +662,7 @@
       ctx.lineTo(mouthPix.x, mouthPix.y + crossSize);
       ctx.stroke();
 
-      // --- 2. ONLY draw aiming visuals if aiming ---
+      // Only draw aiming visuals if aiming
       if (isAiming) {
           const maxPull = 1.25, kSpeed = 18.0, gamma = 1.10, minSpeed = 1.5;
           let pull = Vec2.sub(pointerWorld, base);
@@ -699,7 +702,6 @@
 
   function sampleTrajectory(p0, v0, s, dt) { const pts = []; for (let i=1; i<=s; i++) { const t=i*dt, x=p0.x+v0.x*t, y=p0.y+v0.y*t + 0.5*-10*t*t; if(y<0)break; pts.push(Vec2(x, y)); } return pts; }
   
-  // **MODIFIED**: This now draws a plain red circle for the bird.
   function drawCircle(body, circle) {
     const p = body.getPosition();
     const r = circle.m_radius * APP.PPM * APP.dpr;
