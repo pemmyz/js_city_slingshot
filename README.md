@@ -195,4 +195,4 @@ Includes [Planck.js](https://github.com/shakiba/planck.js) under its license.
 ## 🙌 Credits
 
 - Physics: **Planck.js** by Ahmad Shakiba  
-- Design & code: **Pekka / Pemmyz** (this project)
+- Design & code: **Pemmyz** (this project)
