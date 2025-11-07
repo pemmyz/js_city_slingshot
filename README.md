@@ -5,6 +5,9 @@
 A browser-based **slingshot + destructible buildings** sandbox that doubles as a **physics performance lab**.  
 Built with [Planck.js](https://github.com/shakiba/planck.js) (Box2D port). Tune solver iterations, apply **neighbor-based contact filtering**, try **aggressive LOD/deactivation**, toggle **CCD bullets**, and watch **live telemetry** update in real time.
 
+## Screenshots
+![Game 1](screenshots/game_1.png)
+
 > **Tech:** HTML5 Canvas (2D), vanilla JS, Planck.js via CDN. Works on desktop & mobile (mouse/touch).
 
 ---
