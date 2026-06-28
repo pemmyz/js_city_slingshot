@@ -2,6 +2,10 @@
   const pl = planck;
   const Vec2 = pl.Vec2;
 
+  // Screen configuration for constant 960x720 internal scaling logic
+  const BASE_WIDTH = 960;
+  const BASE_HEIGHT = 720;
+
   // ----- Global App State -----
   const APP = {
     world: null,
@@ -414,7 +418,11 @@
     setupUIControls();
     setupInputHandlers();
     
-    resize();
+    // Set internal logical dimension rendering sizes
+    APP.canvas.width = Math.floor(BASE_WIDTH * APP.dpr); 
+    APP.canvas.height = Math.floor(BASE_HEIGHT * APP.dpr); 
+    
+    createBoundaries();
     resetLevel();
     
     let last = performance.now(); let frameTimes = [];
@@ -499,13 +507,13 @@
     if (APP.boundaryBody) APP.world.destroyBody(APP.boundaryBody);
     APP.boundaryBody = APP.world.createBody();
     APP.boundaryBody.createFixture(pl.Edge(Vec2(-50, 0), Vec2(50, 0)), {friction: 0.9});
-    const rightEdgeX = screenToWorld(window.innerWidth, 0).x;
+    const rightEdgeX = BASE_WIDTH / APP.PPM;
     APP.boundaryBody.createFixture(pl.Edge(Vec2(rightEdgeX, -10), Vec2(rightEdgeX, 100)), {});
   }
   
   function createCityscape() {
-    const startX = screenToWorld(window.innerWidth / 2, 0).x;
-    const endX = screenToWorld(window.innerWidth, 0).x - 1.0;
+    const startX = (BASE_WIDTH / 2) / APP.PPM;
+    const endX = (BASE_WIDTH / APP.PPM) - 1.0;
     const blockW = 0.4, blockH = 0.4;
     let currentX = startX;
     for (let i = 0; i < APP.buildingSettings.numBuildings; i++) {
@@ -548,10 +556,10 @@
     APP.slingshot.isAiming = true;
     APP.slingshot.showDrag = true;
     APP.slingshot.pointerWorld = getWorldFromEvent(evt);
-    evt.preventDefault();
+    if(evt.target === APP.canvas) evt.preventDefault();
   }
 
-  function moveAim(evt) { if (!APP.slingshot.isAiming) return; APP.slingshot.pointerWorld = getWorldFromEvent(evt); evt.preventDefault(); }
+  function moveAim(evt) { if (!APP.slingshot.isAiming) return; APP.slingshot.pointerWorld = getWorldFromEvent(evt); if(evt.target === APP.canvas) evt.preventDefault(); }
   function endAim(evt) {
     if (!APP.slingshot.isAiming) return;
     APP.slingshot.isAiming = false; APP.slingshot.showDrag = false;
@@ -565,9 +573,13 @@
     let speed = Math.max(minSpeed, kSpeed * Math.pow(pull.length(), gamma));
     const v0 = Vec2.mul(dir, speed), mouth = Vec2.add(base, Vec2.mul(dir, mouthOffset));
     spawnBird(mouth, v0);
-    evt.preventDefault();
+    if(evt.target === APP.canvas) evt.preventDefault();
   }
-  function getWorldFromEvent(evt) { const t = (evt.touches && evt.touches.length) ? evt.touches[0] : evt; return screenToWorld(t.clientX, t.clientY); }
+
+  function getWorldFromEvent(evt) { 
+    const t = (evt.touches && evt.touches.length) ? evt.touches[0] : evt; 
+    return screenToWorld(t.clientX, t.clientY); 
+  }
 
   function setupInputHandlers() {
     const canvas = APP.canvas;
@@ -614,10 +626,18 @@
     helpModal.querySelector('.close-btn').addEventListener('click', () => helpModal.classList.toggle('visible'));
   }
 
-  function resize() { APP.canvas.width = Math.floor(window.innerWidth * APP.dpr); APP.canvas.height = Math.floor(window.innerHeight * APP.dpr); createBoundaries(); }
-  window.addEventListener('resize', resize);
-  function worldToScreen(v) { return { x: v.x * APP.PPM * APP.dpr, y: APP.canvas.height - v.y * APP.PPM * APP.dpr }; }
-  function screenToWorld(px, py) { const r = APP.canvas.getBoundingClientRect(); return Vec2((px - r.left) * APP.dpr / (APP.PPM * APP.dpr), (APP.canvas.height - ((py - r.top) * APP.dpr)) / (APP.PPM * APP.dpr)); }
+  // --- World to Screen mapping mappings accounting for new dynamic scaling ---
+  function worldToScreen(v) { 
+    return { x: v.x * APP.PPM * APP.dpr, y: APP.canvas.height - v.y * APP.PPM * APP.dpr }; 
+  }
+  function screenToWorld(px, py) { 
+    const r = APP.canvas.getBoundingClientRect(); 
+    const scaleX = APP.canvas.width / r.width;
+    const scaleY = APP.canvas.height / r.height;
+    const internalX = (px - r.left) * scaleX;
+    const internalY = (py - r.top) * scaleY;
+    return Vec2(internalX / (APP.PPM * APP.dpr), (APP.canvas.height - internalY) / (APP.PPM * APP.dpr)); 
+  }
 
   function draw() {
     const { ctx, canvas, world } = APP;
@@ -684,7 +704,7 @@
           const aimingMouth = Vec2.add(base, Vec2.mul(dir, mouthOffset));
           const aimingMouthPix = worldToScreen(aimingMouth);
           
-          // Draw the plain red ghost projectile (it will draw over the static marker)
+          // Draw the plain red ghost projectile
           ctx.fillStyle = '#ef4444';
           ctx.beginPath();
           ctx.arc(aimingMouthPix.x, aimingMouthPix.y, radius, 0, Math.PI * 2);
@@ -711,7 +731,7 @@
         APP.ctx.save();
         APP.ctx.translate(s.x, s.y);
         APP.ctx.rotate(-body.getAngle());
-        APP.ctx.fillStyle = '#ef4444'; // Just red
+        APP.ctx.fillStyle = '#ef4444';
         APP.ctx.beginPath();
         APP.ctx.arc(0, 0, r, 0, Math.PI * 2);
         APP.ctx.fill();
@@ -731,6 +751,41 @@
     APP.ctx.fillStyle = color; APP.ctx.fill(); APP.ctx.lineWidth = 1*APP.dpr; APP.ctx.strokeStyle = 'rgba(0,0,0,0.25)'; APP.ctx.stroke(); 
   }
 
+  // ----- Mobile Fullscreen Layout Logic -----
+  const mobileToggleBtn = document.getElementById('mobile-btn');
+  const screenElement = document.getElementById('screen');
+  
+  function scaleGame() {
+      const isFullscreen = document.fullscreenElement || document.webkitFullscreenElement;
+      
+      // Calculate the scale to fit the window while maintaining aspect ratio
+      const scale = Math.min(
+          window.innerWidth / BASE_WIDTH,
+          window.innerHeight / BASE_HEIGHT
+      );
+      
+      screenElement.style.transform = `scale(${scale})`;
+      
+      // Lock scrolling only when fullscreen is active
+      if (isFullscreen) {
+          document.body.classList.add('mobile-mode');
+      } else {
+          document.body.classList.remove('mobile-mode');
+      }
+  }
+
+  function goFull() {
+      const el = document.documentElement;
+      if (el.requestFullscreen) el.requestFullscreen();
+      else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
+  }
+
+  window.addEventListener("resize", scaleGame);
+  window.addEventListener("fullscreenchange", scaleGame);
+  window.addEventListener("webkitfullscreenchange", scaleGame);
+  mobileToggleBtn.addEventListener('click', goFull);
+
   // ----- Start -----
   init();
+  scaleGame(); // Initial scale setup
 })();
